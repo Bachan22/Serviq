@@ -1,0 +1,46 @@
+# Dependencies
+node_modules/
+*/node_modules/
+**/node_modules/
+
+# Production builds
+dist/
+*/dist/
+**/dist/
+build/
+*/build/
+
+# Environment variables & local secrets
+.env
+*.env
+!.env.example
+!*.env.example
+**/.env
+!**/.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# IDE & Editor caches
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.agents/
+
+# Testing & Coverage
+coverage/
+*.lcov
