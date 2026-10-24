@@ -21,6 +21,9 @@ import {
   ArrowUpRight,
   ShieldCheck,
   BadgeCheck,
+  Phone,
+  Mail,
+  X,
 } from 'lucide-react';
 
 export default function WorkerLayout({ notify }) {
@@ -36,6 +39,15 @@ export default function WorkerLayout({ notify }) {
   const [matchingCount, setMatchingCount] = useState(0);
   const [mobileNav, setMobileNav] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [showSupportModal, setShowSupportModal] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(2);
+
+  const notifications = [
+    { id: 1, title: 'New Job Match Nearby', desc: 'A customer in your service area posted a new request.', link: '/worker/jobs', time: 'Just now' },
+    { id: 2, title: 'Payout Settlement Processed', desc: 'Recent earnings have been credited to your direct payout ledger.', link: '/worker/earnings', time: '1h ago' },
+    { id: 3, title: 'Identity Verified', desc: 'Your trade skill and profile are approved for live service bookings.', link: '/worker/profile', time: '1d ago' },
+  ];
 
   const isPendingVerification = user?.verificationStatus === 'pending';
 
@@ -167,14 +179,61 @@ export default function WorkerLayout({ notify }) {
         <div className="topbar-spacer" />
 
         {/* Notifications */}
-        <button
-          className="icon-btn notification-btn"
-          onClick={() => notify?.('No new system alerts.')}
-          aria-label="Notifications"
-        >
-          <Bell size={18} />
-          <i />
-        </button>
+        <div className="top-profile-wrapper">
+          <button
+            className="icon-btn notification-btn"
+            onClick={() => setShowNotifications(!showNotifications)}
+            aria-label="Notifications"
+            aria-expanded={showNotifications}
+          >
+            <Bell size={18} />
+            {unreadCount > 0 && <i />}
+          </button>
+
+          {showNotifications && (
+            <div className="profile-dropdown-menu" style={{ width: '320px', right: 0, padding: '12px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                <strong style={{ fontSize: '14px', color: '#0f172a' }}>Partner Alerts</strong>
+                {unreadCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUnreadCount(0);
+                      notify?.('All notifications marked as read.');
+                    }}
+                    style={{ background: 'none', border: 'none', fontSize: '11px', color: '#FF9900', fontWeight: '600', cursor: 'pointer' }}
+                  >
+                    Mark all read
+                  </button>
+                )}
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {notifications.map((n) => (
+                  <div
+                    key={n.id}
+                    onClick={() => {
+                      setShowNotifications(false);
+                      navigate(n.link);
+                    }}
+                    style={{
+                      padding: '8px 10px',
+                      borderRadius: '8px',
+                      background: '#f8fafc',
+                      cursor: 'pointer',
+                      borderLeft: '3px solid #FF9900',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', fontWeight: '600', color: '#0f172a' }}>
+                      <span>{n.title}</span>
+                      <small style={{ color: '#94a3b8', fontWeight: '400' }}>{n.time}</small>
+                    </div>
+                    <p style={{ margin: '3px 0 0', fontSize: '12px', color: '#64748b', lineHeight: '1.3' }}>{n.desc}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Profile Dropdown */}
         <div className="top-profile-wrapper">
@@ -267,7 +326,7 @@ export default function WorkerLayout({ notify }) {
               </div>
               <strong>Partner Support</strong>
               <p>Get priority help regarding payouts, customer disputes, and job safety.</p>
-              <button onClick={() => notify?.('Serviq Partner Hotline is available 24/7.')}>
+              <button onClick={() => setShowSupportModal(true)}>
                 Partner support <ArrowUpRight size={14} />
               </button>
             </div>
@@ -297,6 +356,45 @@ export default function WorkerLayout({ notify }) {
           </footer>
         </main>
       </div>
+
+      {showSupportModal && (
+        <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && setShowSupportModal(false)}>
+          <div className="modal-card" role="dialog" aria-modal="true" aria-label="Partner Support">
+            <div className="modal-header">
+              <div>
+                <h2>Serviq Partner Support</h2>
+                <p>Priority partner hotline for payout settlements, disputes, and live job safety.</p>
+              </div>
+              <button className="icon-btn" onClick={() => setShowSupportModal(false)} aria-label="Close dialog">
+                <X size={19} />
+              </button>
+            </div>
+            <div style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', background: '#f8fafc', borderRadius: '10px' }}>
+                <Phone size={20} color="#FF9900" />
+                <div>
+                  <strong style={{ fontSize: '14px', display: 'block', color: '#0f172a' }}>Priority Partner Hotline</strong>
+                  <a href="tel:+918000073784" style={{ fontSize: '13px', color: '#FF9900', textDecoration: 'none' }}>+91 80000 PRO-HELP (73784)</a>
+                  <small style={{ display: 'block', color: '#94a3b8' }}>Dedicated line for verified service partners (24/7)</small>
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', background: '#f8fafc', borderRadius: '10px' }}>
+                <Mail size={20} color="#FF9900" />
+                <div>
+                  <strong style={{ fontSize: '14px', display: 'block', color: '#0f172a' }}>Partner Operations Desk</strong>
+                  <a href="mailto:partners@serviq.in" style={{ fontSize: '13px', color: '#FF9900', textDecoration: 'none' }}>partners@serviq.in</a>
+                  <small style={{ display: 'block', color: '#94a3b8' }}>For banking details, TDS forms, and background checks</small>
+                </div>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '8px' }}>
+                <button className="btn primary small" onClick={() => setShowSupportModal(false)}>
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

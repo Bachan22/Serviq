@@ -715,15 +715,31 @@ export const dbService = {
         if (w) workerName = w.name || w.fullName;
       }
 
+      const rawStatus = j.status || 'open';
+      const isTrackingActive = Boolean(
+        j.acceptedWorkerId && ['accepted', 'on_the_way', 'arrived', 'in_progress'].includes(rawStatus)
+      );
+
+      let displayStatus = rawStatus;
+      if (rawStatus === 'open') displayStatus = 'Request sent';
+      else if (rawStatus === 'accepted') displayStatus = 'Accepted';
+      else if (rawStatus === 'on_the_way') displayStatus = 'Worker on the way';
+      else if (rawStatus === 'arrived') displayStatus = 'Worker arrived';
+      else if (rawStatus === 'in_progress') displayStatus = 'In progress';
+      else if (rawStatus === 'completed') displayStatus = 'completed';
+
       return {
         id: j.id,
         title: j.title || `${j.service} service`,
+        service: j.service,
         worker: workerName,
         workerId: j.acceptedWorkerId,
         date: j.createdAt ? new Date(j.createdAt).toLocaleDateString('en-IN') : 'Today',
         time: j.scheduledTime || 'As scheduled',
         price: Number(j.agreedPrice || j.budget || j.price || 400),
-        status: j.status === 'open' ? 'Request sent' : j.status === 'accepted' ? 'In progress' : j.status,
+        status: displayStatus,
+        rawStatus,
+        canTrack: isTrackingActive,
       };
     });
   },
@@ -750,6 +766,202 @@ export const dbService = {
 
     saveStore(STORAGE_KEYS.SAVED_WORKERS, saved);
     return isSaved;
+  },
+
+  // ================= LIVE WORKER TRACKING & STATUS =================
+  /**
+   * Updates worker's live location and updates active jobs assigned to this worker.
+   */
+  async updateWorkerLocation(workerId, { latitude, longitude }) {
+    if (!workerId || latitude == null || longitude == null) return null;
+
+    const workers = getStore(STORAGE_KEYS.WORKERS, []);
+    const worker = workers.find((w) => w.id === workerId);
+    const nowIso = new Date().toISOString();
+
+    if (worker) {
+      worker.latitude = Number(latitude);
+      worker.longitude = Number(longitude);
+      worker.lastLocationUpdatedAt = nowIso;
+      saveStore(STORAGE_KEYS.WORKERS, workers);
+    }
+
+    // Also update any active jobs assigned to this worker
+    const jobs = getStore(STORAGE_KEYS.JOBS, []);
+    let updatedCount = 0;
+
+    jobs.forEach((job) => {
+      if (
+        job.acceptedWorkerId === workerId &&
+        ['accepted', 'on_the_way', 'arrived', 'in_progress'].includes(job.status)
+      ) {
+        job.workerLatitude = Number(latitude);
+        job.workerLongitude = Number(longitude);
+        job.workerLocationUpdatedAt = nowIso;
+        updatedCount++;
+      }
+    });
+
+    if (updatedCount > 0) {
+      saveStore(STORAGE_KEYS.JOBS, jobs);
+    }
+
+    return {
+      workerId,
+      latitude: Number(latitude),
+      longitude: Number(longitude),
+      lastLocationUpdatedAt: nowIso,
+    };
+  },
+
+  /**
+   * Updates job status through the live service lifecycle:
+   * 'accepted' -> 'on_the_way' -> 'arrived' -> 'in_progress' -> 'completed' (or 'cancelled')
+   */
+  async updateJobStatus(jobId, newStatus, workerId) {
+    const jobs = getStore(STORAGE_KEYS.JOBS, []);
+    const job = jobs.find((j) => j.id === jobId);
+    if (!job) throw new ApiError('Job not found', 404);
+
+    if (workerId && job.acceptedWorkerId && job.acceptedWorkerId !== workerId) {
+      throw new ApiError('Unauthorized: You are not assigned to this job', 403);
+    }
+
+    const nowIso = new Date().toISOString();
+    job.status = newStatus;
+
+    if (newStatus === 'on_the_way') {
+      job.departedAt = nowIso;
+    } else if (newStatus === 'arrived') {
+      job.arrivedAt = nowIso;
+    } else if (newStatus === 'in_progress') {
+      job.startedAt = nowIso;
+    } else if (newStatus === 'completed') {
+      job.completedAt = nowIso;
+      saveStore(STORAGE_KEYS.JOBS, jobs);
+      return this.completeJob(jobId);
+    }
+
+    saveStore(STORAGE_KEYS.JOBS, jobs);
+    return job;
+  },
+
+  /**
+   * Securely retrieves tracking bundle for an authorized customer or worker.
+   */
+  async getJobTracking(jobId, requesterId) {
+    const jobs = getStore(STORAGE_KEYS.JOBS, []);
+    const job = jobs.find((j) => j.id === jobId);
+    if (!job) throw new ApiError('Job not found', 404);
+
+    // Privacy & Security Check:
+    // Only the customer who booked, the assigned worker, or admin may access tracking
+    const isCustomer = requesterId && (job.customerId === requesterId || requesterId === 'guest-customer');
+    const isWorker = requesterId && job.acceptedWorkerId === requesterId;
+
+    if (!isCustomer && !isWorker && requesterId !== 'admin') {
+      throw new ApiError('Unauthorized: You do not have permission to view live tracking for this booking.', 403);
+    }
+
+    const workers = getStore(STORAGE_KEYS.WORKERS, []);
+    const worker = workers.find((w) => w.id === job.acceptedWorkerId) || null;
+
+    // Default destination coordinates (Bhayandar West) if job coordinates are missing
+    const destLat = job.latitude != null ? Number(job.latitude) : 19.298;
+    const destLng = job.longitude != null ? Number(job.longitude) : 72.855;
+
+    // Current worker coordinates: from job snapshot or worker profile
+    const workerLat = job.workerLatitude ?? worker?.latitude ?? 19.284;
+    const workerLng = job.workerLongitude ?? worker?.longitude ?? 72.868;
+    const lastUpdate = job.workerLocationUpdatedAt || worker?.lastLocationUpdatedAt || job.acceptedAt || job.createdAt;
+
+    // Check freshness: updated in the last 2 minutes is considered live
+    const isLive = lastUpdate ? (Date.now() - new Date(lastUpdate).getTime()) < 120000 : false;
+
+    // Distance calculation
+    const distanceKm = calculateDistanceKm(workerLat, workerLng, destLat, destLng);
+
+    return {
+      jobId: job.id,
+      title: job.title || `${job.service} service`,
+      service: job.service,
+      status: job.status,
+      agreedPrice: job.agreedPrice || job.budget || job.price,
+      destination: {
+        address: job.location || job.area || 'Customer Service Address',
+        latitude: destLat,
+        longitude: destLng,
+      },
+      worker: worker
+        ? {
+            id: worker.id,
+            name: worker.name || worker.fullName || 'Service Professional',
+            skill: worker.skill || worker.primarySkill || job.service,
+            rating: worker.averageRating || worker.avgRating || 4.8,
+            reviewsCount: worker.totalReviewsCount || worker.reviewCount || 12,
+            phoneNumber: worker.phoneNumber || '+91 98200 12345',
+            latitude: workerLat,
+            longitude: workerLng,
+            lastLocationUpdatedAt: lastUpdate,
+            isLive,
+          }
+        : null,
+      customer: {
+        id: job.customerId,
+        name: job.customerName || 'Customer',
+        address: job.location || 'Local address',
+      },
+      metrics: {
+        distanceKm,
+        estimatedDurationMinutes: distanceKm ? Math.max(2, Math.round((distanceKm / 25) * 60)) : null,
+      },
+      timeline: {
+        createdAt: job.createdAt,
+        acceptedAt: job.acceptedAt,
+        departedAt: job.departedAt,
+        arrivedAt: job.arrivedAt,
+        startedAt: job.startedAt,
+        completedAt: job.completedAt,
+      },
+    };
+  },
+
+  /**
+   * Updates user profile in local session storage and worker/customer stores.
+   */
+  async updateUserProfile(userId, updates = {}) {
+    if (!userId) throw new ApiError('User ID is required', 400);
+
+    // Update active session user if present
+    const rawSession = localStorage.getItem('serviq_session_user');
+    let updatedUser = null;
+    if (rawSession) {
+      try {
+        const sessionUser = JSON.parse(rawSession);
+        if (sessionUser.id === userId) {
+          updatedUser = { ...sessionUser, ...updates };
+          localStorage.setItem('serviq_session_user', JSON.stringify(updatedUser));
+        }
+      } catch (e) {
+        console.error('Failed to parse session user:', e);
+      }
+    }
+
+    // Update workers store if applicable
+    const workers = getStore(STORAGE_KEYS.WORKERS, []);
+    const workerIdx = workers.findIndex((w) => w.id === userId);
+    if (workerIdx !== -1) {
+      workers[workerIdx] = {
+        ...workers[workerIdx],
+        ...updates,
+        name: updates.fullName || workers[workerIdx].name,
+        skill: updates.primarySkill || workers[workerIdx].skill,
+        serviceArea: updates.serviceArea || updates.city || workers[workerIdx].serviceArea,
+      };
+      saveStore(STORAGE_KEYS.WORKERS, workers);
+    }
+
+    return updatedUser || updates;
   },
 
   // ================= DEMO SEED & CLEAN (STEP 5) =================

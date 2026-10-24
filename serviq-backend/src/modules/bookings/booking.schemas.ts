@@ -39,9 +39,15 @@ export const listBookingsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(50).default(10),
 });
 
+export const updateBookingLocationSchema = z.object({
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+});
+
 export type CreateDirectBookingInput = z.infer<typeof createDirectBookingSchema>;
 export type CreateBroadcastBookingInput = z.infer<typeof createBroadcastBookingSchema>;
 export type WorkerRespondDirectInput = z.infer<typeof workerRespondDirectSchema>;
 export type UpdateBookingStatusInput = z.infer<typeof updateBookingStatusSchema>;
+export type UpdateBookingLocationInput = z.infer<typeof updateBookingLocationSchema>;
 export type CancelBookingInput = z.infer<typeof cancelBookingSchema>;
 export type ListBookingsQueryInput = z.infer<typeof listBookingsQuerySchema>;

@@ -578,6 +578,101 @@ export class BookingService {
 
     return list;
   }
+
+  async getBookingTracking(userId: string, role: string, bookingId: string) {
+    const booking = await db.query.bookings.findFirst({
+      where: eq(bookings.id, bookingId),
+    });
+
+    if (!booking) {
+      throw new NotFoundError('Booking not found.');
+    }
+
+    const isCustomer = booking.customerId === userId;
+    const isWorker = booking.workerId === userId;
+    const isAdmin = role.includes('ADMIN');
+
+    if (!isCustomer && !isWorker && !isAdmin) {
+      throw new ForbiddenError('Unauthorized: You cannot access live tracking for this booking.');
+    }
+
+    const worker = booking.workerId ? await db.query.workerProfiles.findFirst({
+      where: eq(workerProfiles.id, booking.workerId),
+    }) : null;
+
+    const workerUser = booking.workerId ? await db.query.users.findFirst({
+      where: eq(users.id, booking.workerId),
+    }) : null;
+
+    const category = await db.query.serviceCategories.findFirst({
+      where: eq(serviceCategories.id, booking.categoryId),
+    });
+
+    return {
+      bookingId: booking.id,
+      bookingNumber: booking.bookingNumber,
+      status: booking.status,
+      categoryName: category?.name,
+      destination: {
+        address: booking.serviceAddressText,
+        latitude: booking.serviceLatitude,
+        longitude: booking.serviceLongitude,
+      },
+      worker: worker ? {
+        id: worker.id,
+        displayName: worker.displayName,
+        averageRating: Number(worker.averageRating),
+        totalReviewsCount: worker.totalReviewsCount,
+        phoneNumber: isCustomer ? workerUser?.phoneNumber : undefined,
+        latitude: worker.latitude,
+        longitude: worker.longitude,
+        lastLocationUpdatedAt: worker.lastLocationUpdatedAt,
+      } : null,
+      timeline: {
+        createdAt: booking.createdAt,
+        dispatchedAt: booking.dispatchedAt,
+        arrivedAt: booking.arrivedAt,
+        startedAt: booking.startedAt,
+        completedAt: booking.completedAt,
+      },
+    };
+  }
+
+  async updateBookingWorkerLocation(workerId: string, bookingId: string, latitude: number, longitude: number) {
+    const booking = await db.query.bookings.findFirst({
+      where: eq(bookings.id, bookingId),
+    });
+
+    if (!booking) {
+      throw new NotFoundError('Booking not found.');
+    }
+
+    if (booking.workerId !== workerId) {
+      throw new ForbiddenError('You are not the assigned professional for this booking.');
+    }
+
+    if (!['ACCEPTED', 'ARRIVED', 'IN_PROGRESS'].includes(booking.status)) {
+      throw new BadRequestError(`Cannot update live location for booking in status ${booking.status}`);
+    }
+
+    // Update worker profile location & timestamp
+    await db.update(workerProfiles)
+      .set({
+        latitude,
+        longitude,
+        lastLocationUpdatedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(workerProfiles.id, workerId));
+
+    return {
+      bookingId,
+      workerId,
+      latitude,
+      longitude,
+      updatedAt: new Date(),
+    };
+  }
 }
 
 export const bookingService = new BookingService();

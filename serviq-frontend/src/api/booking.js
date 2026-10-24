@@ -83,6 +83,25 @@ export const bookingApi = {
   },
 
   /**
+   * Get live worker tracking bundle for authorized booking
+   */
+  async getBookingTracking(bookingId) {
+    const res = await apiClient(`/bookings/${bookingId}/tracking`);
+    return res.data;
+  },
+
+  /**
+   * Worker: Update live GPS coordinates for active booking
+   */
+  async updateWorkerLocation(bookingId, { latitude, longitude }) {
+    const res = await apiClient(`/bookings/${bookingId}/location`, {
+      method: 'PATCH',
+      body: { latitude, longitude },
+    });
+    return res.data;
+  },
+
+  /**
    * List customer or worker bookings
    */
   async listBookings(query = {}) {

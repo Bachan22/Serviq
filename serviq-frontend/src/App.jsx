@@ -11,6 +11,8 @@ import ResetPasswordPage from './pages/auth/ResetPasswordPage.jsx';
 import WorkerRatesPage from './pages/worker/WorkerRatesPage.jsx';
 import ErrorBoundary from './components/ErrorBoundary.jsx';
 import { dbService } from './api/database.js';
+import LiveTrackingModal from './components/LiveTrackingModal.jsx';
+import MessagesPage from './pages/MessagesPage.jsx';
 
 import {
   Search, MapPin, ChevronDown, ArrowUpRight, ArrowRight, Star, ShieldCheck,
@@ -18,7 +20,7 @@ import {
   CalendarDays, TrendingUp, Check, X, Plus, Minus, SlidersHorizontal,
   CircleDollarSign, Phone, Send, BadgeCheck, House, Heart, Filter,
   ClipboardList, CircleCheckBig, Timer, Shield, UserRound, BriefcaseBusiness,
-  Wallet, MessageCircle
+  Wallet, MessageCircle, Navigation
 } from 'lucide-react';
 
 function money(n) { return '₹' + Number(n || 0).toLocaleString('en-IN'); }
@@ -94,7 +96,7 @@ export default function App() {
 
       const storeJobs = JSON.parse(localStorage.getItem('serviq_db_jobs') || '[]');
       const active = storeJobs.filter(
-        (j) => j.acceptedWorkerId === user.id && (j.status === 'accepted' || j.status === 'in_progress')
+        (j) => j.acceptedWorkerId === user.id && ['accepted', 'on_the_way', 'arrived', 'in_progress'].includes(j.status)
       );
       setActiveJobs(
         active.map((j) => ({
@@ -104,7 +106,12 @@ export default function App() {
           customer: j.customerName || 'Customer',
           location: j.location || j.area || 'Nearby',
           price: Number(j.agreedPrice || j.budget || j.price || 400),
-          status: 'Accepted & Active',
+          status: j.status,
+          rawStatus: j.status,
+          latitude: j.latitude,
+          longitude: j.longitude,
+          workerLatitude: j.workerLatitude,
+          workerLongitude: j.workerLongitude,
           time: j.timeAgo || 'In progress',
           initials: (j.customerName || 'CU').slice(0, 2).toUpperCase(),
           details: j.description || '',
@@ -189,9 +196,81 @@ export default function App() {
     }
   };
 
+  const startTravelAction = async (job) => {
+    try {
+      await dbService.updateJobStatus(job.id, 'on_the_way', user.id);
+      notify('You are en route! Live GPS location sharing is active.');
+
+      // Try reading browser GPS if permitted
+      if (typeof navigator !== 'undefined' && navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          async (pos) => {
+            await dbService.updateWorkerLocation(user.id, {
+              latitude: pos.coords.latitude,
+              longitude: pos.coords.longitude,
+            });
+            await loadWorkerData();
+          },
+          (err) => {
+            console.log('[GPS] Using standard location:', err.message);
+          },
+          { enableHighAccuracy: true, timeout: 5000 }
+        );
+      }
+
+      await loadWorkerData();
+    } catch (err) {
+      notify(err.message || 'Failed to start travel.');
+    }
+  };
+
+  const stepCloserAction = async (job) => {
+    try {
+      // Find current worker position and customer destination
+      const destLat = job.latitude || 19.298;
+      const destLng = job.longitude || 72.855;
+      const currentLat = job.workerLatitude || user?.latitude || 19.284;
+      const currentLng = job.workerLongitude || user?.longitude || 72.868;
+
+      // Move 25% closer towards customer
+      const stepLat = currentLat + (destLat - currentLat) * 0.25;
+      const stepLng = currentLng + (destLng - currentLng) * 0.25;
+
+      await dbService.updateWorkerLocation(user.id, {
+        latitude: stepLat,
+        longitude: stepLng,
+      });
+
+      notify('Simulated GPS location update: moved closer to customer destination.');
+      await loadWorkerData();
+    } catch (err) {
+      notify(err.message || 'Failed to update location.');
+    }
+  };
+
+  const arrivedAction = async (job) => {
+    try {
+      await dbService.updateJobStatus(job.id, 'arrived', user.id);
+      notify('Status updated: You have arrived at the customer address.');
+      await loadWorkerData();
+    } catch (err) {
+      notify(err.message || 'Failed to update status.');
+    }
+  };
+
+  const startWorkAction = async (job) => {
+    try {
+      await dbService.updateJobStatus(job.id, 'in_progress', user.id);
+      notify('Service underway: Job marked in progress.');
+      await loadWorkerData();
+    } catch (err) {
+      notify(err.message || 'Failed to start job.');
+    }
+  };
+
   const completeJobAction = async (job) => {
     try {
-      await dbService.completeJob(job.id);
+      await dbService.updateJobStatus(job.id, 'completed', user.id);
       notify(`Job ${job.id} marked as completed! Payout credited to your ledger.`);
       await loadWorkerData();
     } catch (err) {
@@ -314,6 +393,10 @@ export default function App() {
             element={
               <WorkerActive
                 activeJobs={activeJobs}
+                onStartTravel={startTravelAction}
+                onStepCloser={stepCloserAction}
+                onArrived={arrivedAction}
+                onStartWork={startWorkAction}
                 onCompleteJob={completeJobAction}
                 notify={notify}
               />
@@ -523,6 +606,7 @@ function CustomerHome({ search, setSearch, category, setCategory, workers, categ
 
   const firstName = user?.fullName ? user.fullName.split(' ')[0] : 'there';
   const city = user?.city || user?.area || 'Bhayandar, Mumbai';
+  const [showTrustModal, setShowTrustModal] = useState(false);
 
   return (
     <>
@@ -646,10 +730,64 @@ function CustomerHome({ search, setSearch, category, setCategory, workers, categ
           <strong>Good work starts with trust.</strong>
           <p>Look for verified profiles, clear prices, and reviews from other customers.</p>
         </div>
-        <button onClick={() => notify('Serviq guarantees transparent pricing and verified partner reviews.')}>
+        <button onClick={() => setShowTrustModal(true)}>
           How it works <ArrowUpRight size={15} />
         </button>
       </section>
+
+      {showTrustModal && (
+        <Modal
+          title="How Serviq Works"
+          subtitle="Your trusted neighborhood marketplace for verified home services."
+          onClose={() => setShowTrustModal(false)}
+        >
+          <div style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-start' }}>
+              <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: '#ecfdf5', color: '#059669', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <ShieldCheck size={20} />
+              </div>
+              <div>
+                <strong style={{ fontSize: '15px', color: '#0f172a', display: 'block' }}>1. Verified Professionals</strong>
+                <p style={{ margin: '3px 0 0', fontSize: '13px', color: '#64748b' }}>Every service partner undergoes identity verification, trade skill vetting, and background checks.</p>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-start' }}>
+              <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: '#eff6ff', color: '#2563eb', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <Navigation size={20} />
+              </div>
+              <div>
+                <strong style={{ fontSize: '15px', color: '#0f172a', display: 'block' }}>2. Real-time Live GPS Tracking</strong>
+                <p style={{ margin: '3px 0 0', fontSize: '13px', color: '#64748b' }}>Watch your technician travel towards your address with turn-by-turn road routes, remaining kilometers, and live arrival ETAs.</p>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-start' }}>
+              <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: '#fffbeb', color: '#d97706', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <CircleDollarSign size={20} />
+              </div>
+              <div>
+                <strong style={{ fontSize: '15px', color: '#0f172a', display: 'block' }}>3. Transparent Agreed Pricing</strong>
+                <p style={{ margin: '3px 0 0', fontSize: '13px', color: '#64748b' }}>No hidden surge charges or surprise bills. You agree on fair rates before technician arrival.</p>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-start' }}>
+              <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: '#fdf4ff', color: '#a855f7', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <Star size={20} />
+              </div>
+              <div>
+                <strong style={{ fontSize: '15px', color: '#0f172a', display: 'block' }}>4. 100% Satisfaction Guarantee</strong>
+                <p style={{ margin: '3px 0 0', fontSize: '13px', color: '#64748b' }}>Pay only after the service is completed to your expectations, backed by 24/7 dedicated customer assistance.</p>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '10px' }}>
+              <Button onClick={() => setShowTrustModal(false)}>Got it</Button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </>
   );
 }
@@ -920,6 +1058,28 @@ function WorkerDashboard({ jobs = [], activeJobs = [], dashboardStats, onAccept,
 function WorkerJobs({ jobs = [], onAccept, onCounter, notify }) {
   const navigate = useNavigate();
   const safeJobs = Array.isArray(jobs) ? jobs : [];
+  const [showFilterModal, setShowFilterModal] = useState(false);
+  const [minBudget, setMinBudget] = useState(0);
+  const [selectedCategory, setSelectedCategory] = useState('All');
+  const [sortBy, setSortBy] = useState('newest');
+
+  const filteredJobs = useMemo(() => {
+    return safeJobs.filter((job) => {
+      const price = Number(job.price || 0);
+      if (price < minBudget) return false;
+      if (selectedCategory !== 'All') {
+        const cat = (job.category || job.service || '').toLowerCase();
+        const title = (job.title || '').toLowerCase();
+        const searchCat = selectedCategory.toLowerCase();
+        if (!cat.includes(searchCat) && !title.includes(searchCat)) return false;
+      }
+      return true;
+    }).sort((a, b) => {
+      if (sortBy === 'price_high') return (b.price || 0) - (a.price || 0);
+      if (sortBy === 'price_low') return (a.price || 0) - (b.price || 0);
+      return 0;
+    });
+  }, [safeJobs, minBudget, selectedCategory, sortBy]);
 
   return (
     <>
@@ -930,35 +1090,136 @@ function WorkerJobs({ jobs = [], onAccept, onCounter, notify }) {
       />
       <div className="request-toolbar">
         <div className="request-toolbar-label">
-          <span className="live-dot" /> {safeJobs.length} new requests <span>·</span> Nearby matching jobs
+          <span className="live-dot" /> {filteredJobs.length} matching requests <span>·</span> Nearby matching jobs
+          {(minBudget > 0 || selectedCategory !== 'All') && (
+            <Tag tone="warning">Filtered</Tag>
+          )}
         </div>
         <button
           className="filter-btn"
-          onClick={() => notify('Filter criteria updated: Showing nearby requests.')}
+          onClick={() => setShowFilterModal(true)}
         >
           <SlidersHorizontal size={16} /> Filters
         </button>
       </div>
-      {safeJobs.length ? (
+
+      {filteredJobs.length ? (
         <div className="job-request-list">
-          {safeJobs.map((job) => (
+          {filteredJobs.map((job) => (
             <JobRequestCard key={job.id} job={job} onAccept={onAccept} onCounter={onCounter} />
           ))}
         </div>
       ) : (
         <EmptyState
           icon={BriefcaseBusiness}
-          title="You’re all caught up"
-          text="No job requests right now. We will notify you when a matching job is posted nearby."
-          action="Back to dashboard"
-          onAction={() => navigate('/worker')}
+          title={safeJobs.length ? "No jobs match your filter criteria" : "You’re all caught up"}
+          text={safeJobs.length ? "Try lowering your minimum budget or selecting all categories to view available requests." : "No job requests right now. We will notify you when a matching job is posted nearby."}
+          action={safeJobs.length ? "Reset filters" : "Back to dashboard"}
+          onAction={() => {
+            if (safeJobs.length) {
+              setMinBudget(0);
+              setSelectedCategory('All');
+              setSortBy('newest');
+            } else {
+              navigate('/worker');
+            }
+          }}
         />
+      )}
+
+      {showFilterModal && (
+        <Modal
+          title="Filter job requests"
+          subtitle="Refine incoming requests by category, minimum budget, and priority."
+          onClose={() => setShowFilterModal(false)}
+        >
+          <div style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div className="form-group">
+              <label>Service Category</label>
+              <select
+                value={selectedCategory}
+                onChange={(e) => setSelectedCategory(e.target.value)}
+                style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+              >
+                <option value="All">All Categories</option>
+                <option value="Plumbing">Plumbing</option>
+                <option value="Electrical">Electrical</option>
+                <option value="Cleaning">Cleaning</option>
+                <option value="AC repair">AC repair</option>
+                <option value="Painting">Painting</option>
+                <option value="Carpentry">Carpentry</option>
+              </select>
+            </div>
+
+            <div className="form-group">
+              <label>Minimum Budget ({money(minBudget)})</label>
+              <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
+                {[0, 300, 450, 600].map((amt) => (
+                  <button
+                    key={amt}
+                    type="button"
+                    onClick={() => setMinBudget(amt)}
+                    style={{
+                      flex: 1,
+                      padding: '8px',
+                      borderRadius: '8px',
+                      border: minBudget === amt ? '2px solid #FF9900' : '1px solid #cbd5e1',
+                      background: minBudget === amt ? '#fffbeb' : '#fff',
+                      fontWeight: minBudget === amt ? '700' : '500',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {amt === 0 ? 'Any' : `≥ ${money(amt)}`}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label>Sort Order</label>
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+                style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+              >
+                <option value="newest">Most Recent First</option>
+                <option value="price_high">Highest Budget First</option>
+                <option value="price_low">Lowest Budget First</option>
+              </select>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
+              <button
+                type="button"
+                className="text-action"
+                onClick={() => {
+                  setMinBudget(0);
+                  setSelectedCategory('All');
+                  setSortBy('newest');
+                }}
+              >
+                Reset all
+              </button>
+              <Button onClick={() => setShowFilterModal(false)}>
+                Apply Filters
+              </Button>
+            </div>
+          </div>
+        </Modal>
       )}
     </>
   );
 }
 
-function WorkerActive({ activeJobs = [], onCompleteJob, notify }) {
+function WorkerActive({
+  activeJobs = [],
+  onStartTravel,
+  onStepCloser,
+  onArrived,
+  onStartWork,
+  onCompleteJob,
+  notify,
+}) {
   const navigate = useNavigate();
   const safeActiveJobs = Array.isArray(activeJobs) ? activeJobs : [];
 
@@ -967,55 +1228,106 @@ function WorkerActive({ activeJobs = [], onCompleteJob, notify }) {
       <PageHeading
         eyebrow="WORK IN PROGRESS"
         title="Active jobs"
-        subtitle="Keep each customer updated from acceptance to completion."
+        subtitle="Keep each customer updated with real-time GPS tracking from acceptance to completion."
       />
       {safeActiveJobs.length ? (
         <div className="job-request-list">
-          {safeActiveJobs.map((job) => (
-            <article className="job-card" key={job.id}>
-              <div className="job-card-main">
-                <div className="job-category-icon">
-                  <Wrench size={19} />
-                </div>
-                <div className="job-card-details">
-                  <div className="job-card-eyebrow">
-                    <Tag tone="success" dot>
-                      Accepted & Active
-                    </Tag>
-                    <span>
-                      {job.id} · {job.time || 'In progress'}
-                    </span>
+          {safeActiveJobs.map((job) => {
+            const rawStatus = job.rawStatus || 'accepted';
+            const isEnRoute = rawStatus === 'on_the_way';
+            const isArrived = rawStatus === 'arrived';
+            const isInProgress = rawStatus === 'in_progress';
+
+            let statusTone = 'warning';
+            let statusLabel = 'Accepted · Ready to depart';
+
+            if (isEnRoute) {
+              statusTone = 'blue';
+              statusLabel = 'En Route · Sharing Live GPS';
+            } else if (isArrived) {
+              statusTone = 'blue';
+              statusLabel = 'Arrived at Customer Address';
+            } else if (isInProgress) {
+              statusTone = 'success';
+              statusLabel = 'Service Work in Progress';
+            }
+
+            return (
+              <article className="job-card" key={job.id} style={{ borderLeft: isEnRoute ? '4px solid #FF9900' : undefined }}>
+                <div className="job-card-main">
+                  <div className="job-category-icon">
+                    <Wrench size={19} />
                   </div>
-                  <h3>{job.title}</h3>
-                  <div className="job-customer">
-                    <Avatar initials={job.initials || 'CU'} size="xs" />
-                    <span>{job.customer}</span>
-                    <i />
-                    <MapPin size={13} />
-                    <span>{job.location}</span>
+                  <div className="job-card-details">
+                    <div className="job-card-eyebrow">
+                      <Tag tone={statusTone} dot>
+                        {statusLabel}
+                      </Tag>
+                      <span>
+                        {job.id} · {job.time || 'Active now'}
+                      </span>
+                    </div>
+                    <h3>{job.title}</h3>
+                    <div className="job-customer">
+                      <Avatar initials={job.initials || 'CU'} size="xs" />
+                      <span>{job.customer}</span>
+                      <i />
+                      <MapPin size={13} />
+                      <span>{job.location}</span>
+                    </div>
+                    <div className="job-extra">
+                      {isEnRoute ? (
+                        <span style={{ color: '#10B981', fontWeight: '600' }}>
+                          <Navigation size={14} /> Live GPS broadcasting to customer
+                        </span>
+                      ) : (
+                        <span>
+                          <ShieldCheck size={14} /> Customer address confirmed
+                        </span>
+                      )}
+                    </div>
                   </div>
-                  <div className="job-extra">
-                    <span>
-                      <Clock3 size={14} /> Active job
-                    </span>
-                    <span>
-                      <ShieldCheck size={14} /> Customer address visible
-                    </span>
+                  <div className="job-card-price">
+                    <small>Agreed price</small>
+                    <strong>{money(job.price)}</strong>
+                    <span>Direct payout</span>
                   </div>
                 </div>
-                <div className="job-card-price">
-                  <small>Agreed price</small>
-                  <strong>{money(job.price)}</strong>
-                  <span>Direct payout</span>
+
+                {/* Lifecycle Action Buttons */}
+                <div className="job-card-actions" style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '12px' }}>
+                  {rawStatus === 'accepted' && (
+                    <Button onClick={() => onStartTravel(job)}>
+                      <Navigation size={15} /> Start Traveling (Share Live GPS)
+                    </Button>
+                  )}
+
+                  {isEnRoute && (
+                    <>
+                      <Button onClick={() => onArrived(job)}>
+                        <Check size={15} /> I Have Arrived
+                      </Button>
+                      <Button variant="secondary" onClick={() => onStepCloser(job)}>
+                        <ArrowRight size={14} /> Move Closer (Simulate GPS Step)
+                      </Button>
+                    </>
+                  )}
+
+                  {isArrived && (
+                    <Button onClick={() => onStartWork(job)}>
+                      <Wrench size={15} /> Start Service Work
+                    </Button>
+                  )}
+
+                  {isInProgress && (
+                    <Button onClick={() => onCompleteJob(job)}>
+                      <Check size={15} /> Mark Job Completed
+                    </Button>
+                  )}
                 </div>
-              </div>
-              <div className="job-card-actions">
-                <Button onClick={() => onCompleteJob(job)}>
-                  <Check size={15} /> Mark job completed
-                </Button>
-              </div>
-            </article>
-          ))}
+              </article>
+            );
+          })}
         </div>
       ) : (
         <EmptyState
@@ -1148,13 +1460,14 @@ function BookingsPage({ bookings = [], onRefresh }) {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [reviewJob, setReviewJob] = useState(null);
+  const [trackingBookingId, setTrackingBookingId] = useState(null);
   const [rating, setRating] = useState(5);
   const [comment, setComment] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const totalBookings = bookings.length;
-  const inProgress = bookings.filter((b) => b.status === 'In progress' || b.status === 'accepted').length;
-  const completed = bookings.filter((b) => b.status === 'completed').length;
+  const inProgress = bookings.filter((b) => b.canTrack || b.status === 'In progress' || b.status === 'accepted' || b.rawStatus === 'on_the_way').length;
+  const completed = bookings.filter((b) => b.status === 'completed' || b.rawStatus === 'completed').length;
 
   const handleReviewSubmit = async (e) => {
     e.preventDefault();
@@ -1183,14 +1496,14 @@ function BookingsPage({ bookings = [], onRefresh }) {
       <PageHeading
         eyebrow="YOUR HOME, IN GOOD HANDS"
         title="My bookings"
-        subtitle="Keep track of requests, appointments, and completed work."
+        subtitle="Keep track of requests, appointments, and live technician travel."
       />
       <div className="booking-stats">
         <StatCard icon={CalendarDays} label="Total bookings" value={String(totalBookings)} detail="Confirmed appointments" />
-        <StatCard icon={Timer} label="In progress" value={String(inProgress)} detail="Underway" />
+        <StatCard icon={Timer} label="In progress" value={String(inProgress)} detail="Active or traveling" />
         <StatCard icon={CircleCheckBig} label="Completed" value={String(completed)} detail="Verified history" />
       </div>
-      <SectionTitle title="Recent activity" subtitle="Your service booking records." />
+      <SectionTitle title="Recent activity" subtitle="Your service booking records and live tracking." />
       {bookings.length > 0 ? (
         <div className="table-card">
           <div className="table-head">
@@ -1198,7 +1511,7 @@ function BookingsPage({ bookings = [], onRefresh }) {
             <span>Professional</span>
             <span>Schedule</span>
             <span>Amount</span>
-            <span>Status</span>
+            <span>Status & Tracking</span>
           </div>
           {bookings.map((b) => (
             <div className="booking-row" key={b.id}>
@@ -1217,10 +1530,20 @@ function BookingsPage({ bookings = [], onRefresh }) {
                 <small>{b.time}</small>
               </span>
               <strong>{money(b.price)}</strong>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Tag tone={b.status === 'In progress' ? 'blue' : b.status === 'completed' ? 'success' : 'warning'} dot>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                <Tag tone={b.canTrack ? 'blue' : b.status === 'completed' ? 'success' : 'warning'} dot>
                   {b.status}
                 </Tag>
+                {b.canTrack && (
+                  <button
+                    className="btn primary small"
+                    onClick={() => setTrackingBookingId(b.id)}
+                    style={{ fontSize: '11px', padding: '4px 10px', display: 'flex', alignItems: 'center', gap: '5px' }}
+                    title="Track professional's live GPS route"
+                  >
+                    <Navigation size={12} /> Track Live
+                  </button>
+                )}
                 {b.status === 'completed' && (
                   <button
                     className="btn secondary small"
@@ -1298,31 +1621,62 @@ function BookingsPage({ bookings = [], onRefresh }) {
           </form>
         </Modal>
       )}
-    </>
-  );
-}
 
-function MessagesPage({ notify }) {
-  return (
-    <>
-      <PageHeading
-        eyebrow="DIRECT COMMUNICATION"
-        title="Messages"
-        subtitle="Coordinate service details directly with your technician or customer."
-      />
-      <EmptyState
-        icon={MessageCircle}
-        title="No active messages"
-        text="Messages will appear here as soon as you connect with customers or service professionals regarding an active job."
-      />
+      {trackingBookingId && (
+        <LiveTrackingModal
+          bookingId={trackingBookingId}
+          userId={user?.id || 'guest-customer'}
+          onClose={() => setTrackingBookingId(null)}
+          onRefreshBookings={onRefresh}
+        />
+      )}
     </>
   );
 }
 
 function ProfilePage({ role, notify }) {
-  const { user, changePassword } = useAuth();
+  const { user, changePassword, updateUser } = useAuth();
   const navigate = useNavigate();
   const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [showEditProfileModal, setShowEditProfileModal] = useState(false);
+  const [showLocationsModal, setShowLocationsModal] = useState(false);
+  const [showNotifModal, setShowNotifModal] = useState(false);
+
+  // Form states for Edit Profile
+  const [editName, setEditName] = useState(user?.fullName || '');
+  const [editPhone, setEditPhone] = useState(user?.phoneNumber || '');
+  const [editArea, setEditArea] = useState(user?.city || user?.area || user?.serviceArea || 'Bhayandar West, Mumbai');
+  const [editSkill, setEditSkill] = useState(user?.primarySkill || 'Plumbing');
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+
+  // Locations state
+  const standardLocations = [
+    'Bhayandar West, Mumbai',
+    'Bhayandar East, Mumbai',
+    'Mira Road East, Mumbai',
+    'Mira Road West, Mumbai',
+    'Borivali West, Mumbai',
+    'Kandivali West, Mumbai',
+    'Andheri East, Mumbai',
+  ];
+  const [selectedLoc, setSelectedLoc] = useState(user?.city || user?.area || user?.serviceArea || 'Bhayandar West, Mumbai');
+  const [customLoc, setCustomLoc] = useState('');
+
+  // Notification preferences
+  const [notifPrefs, setNotifPrefs] = useState(() => {
+    try {
+      const stored = localStorage.getItem('serviq_notification_prefs');
+      return stored ? JSON.parse(stored) : {
+        smsTracking: true,
+        bookingUpdates: true,
+        whatsappReceipts: true,
+        promotions: false,
+      };
+    } catch {
+      return { smsTracking: true, bookingUpdates: true, whatsappReceipts: true, promotions: false };
+    }
+  });
+
   const [oldPassword, setOldPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -1334,6 +1688,60 @@ function ProfilePage({ role, notify }) {
   const initials = parts.length >= 2
     ? `${parts[0][0]}${parts[1][0]}`.toUpperCase()
     : parts[0]?.slice(0, 2).toUpperCase() || 'SQ';
+
+  const handleSaveProfile = async (e) => {
+    e.preventDefault();
+    if (!editName.trim()) {
+      notify('Please enter your full name.');
+      return;
+    }
+    setIsSavingProfile(true);
+    try {
+      const updates = {
+        fullName: editName.trim(),
+        phoneNumber: editPhone.trim(),
+        city: editArea.trim(),
+        serviceArea: editArea.trim(),
+        ...(role === 'worker' ? { primarySkill: editSkill } : {}),
+      };
+      if (user?.id) {
+        await dbService.updateUserProfile(user.id, updates);
+      }
+      updateUser?.(updates);
+      notify('Profile details updated successfully!');
+      setShowEditProfileModal(false);
+    } catch (err) {
+      notify(err.message || 'Failed to update profile.');
+    } finally {
+      setIsSavingProfile(false);
+    }
+  };
+
+  const handleSaveLocation = async (loc) => {
+    const finalLoc = (loc || customLoc || selectedLoc).trim();
+    if (!finalLoc) return;
+    try {
+      const updates = { city: finalLoc, area: finalLoc, serviceArea: finalLoc };
+      if (user?.id) {
+        await dbService.updateUserProfile(user.id, updates);
+      }
+      updateUser?.(updates);
+      setSelectedLoc(finalLoc);
+      setShowLocationsModal(false);
+      notify(`Primary service location set to ${finalLoc}`);
+    } catch (err) {
+      notify(err.message || 'Failed to update location.');
+    }
+  };
+
+  const handleToggleNotif = (key) => {
+    setNotifPrefs((prev) => {
+      const next = { ...prev, [key]: !prev[key] };
+      localStorage.setItem('serviq_notification_prefs', JSON.stringify(next));
+      return next;
+    });
+    notify('Notification preference saved.');
+  };
 
   const handleChangePassword = async (e) => {
     e.preventDefault();
@@ -1387,7 +1795,13 @@ function ProfilePage({ role, notify }) {
           <Tag tone="success" dot>
             Active Account
           </Tag>
-          <Button variant="secondary" onClick={() => notify('Account details are up to date.')}>
+          <Button variant="secondary" onClick={() => {
+            setEditName(user?.fullName || '');
+            setEditPhone(user?.phoneNumber || '');
+            setEditArea(user?.city || user?.area || user?.serviceArea || 'Bhayandar West, Mumbai');
+            setEditSkill(user?.primarySkill || 'Plumbing');
+            setShowEditProfileModal(true);
+          }}>
             Edit profile
           </Button>
         </div>
@@ -1396,19 +1810,25 @@ function ProfilePage({ role, notify }) {
             icon={UserRound}
             title="Personal information"
             subtitle={`${user?.email || 'name@example.com'}${user?.phoneNumber ? ' • ' + user.phoneNumber : ''}`}
-            onClick={() => notify('Personal details view active.')}
+            onClick={() => {
+              setEditName(user?.fullName || '');
+              setEditPhone(user?.phoneNumber || '');
+              setEditArea(user?.city || user?.area || user?.serviceArea || 'Bhayandar West, Mumbai');
+              setEditSkill(user?.primarySkill || 'Plumbing');
+              setShowEditProfileModal(true);
+            }}
           />
           <SettingsRow
             icon={MapPin}
             title="Saved locations"
             subtitle={user?.city || user?.area || user?.serviceArea || 'Mumbai Suburbs'}
-            onClick={() => notify('Location settings view active.')}
+            onClick={() => setShowLocationsModal(true)}
           />
           <SettingsRow
             icon={CalendarDays}
             title="Notification preferences"
-            subtitle="SMS alerts and push notifications enabled"
-            onClick={() => notify('Notification settings view active.')}
+            subtitle="Live GPS tracking alerts and SMS updates active"
+            onClick={() => setShowNotifModal(true)}
           />
           <SettingsRow
             icon={ShieldCheck}
@@ -1424,6 +1844,182 @@ function ProfilePage({ role, notify }) {
           />
         </div>
       </div>
+
+      {/* Edit Profile Modal */}
+      {showEditProfileModal && (
+        <Modal
+          title="Edit account details"
+          subtitle="Update your name, contact information, and service area."
+          onClose={() => setShowEditProfileModal(false)}
+        >
+          <form onSubmit={handleSaveProfile} style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <div className="form-group">
+              <label>Full name</label>
+              <input
+                type="text"
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                placeholder="Enter full name"
+                required
+              />
+            </div>
+            <div className="form-group">
+              <label>Phone number</label>
+              <input
+                type="tel"
+                value={editPhone}
+                onChange={(e) => setEditPhone(e.target.value)}
+                placeholder="+91 98765 43210"
+              />
+            </div>
+            <div className="form-group">
+              <label>Service Area / City</label>
+              <input
+                type="text"
+                value={editArea}
+                onChange={(e) => setEditArea(e.target.value)}
+                placeholder="e.g. Bhayandar West, Mumbai"
+              />
+            </div>
+            {role === 'worker' && (
+              <div className="form-group">
+                <label>Primary Skill Category</label>
+                <select value={editSkill} onChange={(e) => setEditSkill(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1' }}>
+                  <option value="Plumbing">Plumbing</option>
+                  <option value="Electrical">Electrical</option>
+                  <option value="Cleaning">Cleaning</option>
+                  <option value="AC repair">AC repair</option>
+                  <option value="Painting">Painting</option>
+                  <option value="Carpentry">Carpentry</option>
+                </select>
+              </div>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '12px' }}>
+              <Button variant="secondary" onClick={() => setShowEditProfileModal(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isSavingProfile}>
+                {isSavingProfile ? 'Saving…' : 'Save Changes'}
+              </Button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* Saved Locations Modal */}
+      {showLocationsModal && (
+        <Modal
+          title="Saved service locations"
+          subtitle="Choose or enter your primary address for quick booking."
+          onClose={() => setShowLocationsModal(false)}
+        >
+          <div style={{ marginTop: '14px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {standardLocations.map((loc) => (
+              <button
+                key={loc}
+                type="button"
+                onClick={() => handleSaveLocation(loc)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '12px 16px',
+                  borderRadius: '10px',
+                  border: selectedLoc === loc ? '2px solid #FF9900' : '1px solid #e2e8f0',
+                  background: selectedLoc === loc ? '#fffbeb' : '#fff',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <MapPin size={16} color={selectedLoc === loc ? '#FF9900' : '#64748b'} />
+                  <strong style={{ fontSize: '14px', color: '#0f172a' }}>{loc}</strong>
+                </div>
+                {selectedLoc === loc && <Tag tone="warning" dot>Default</Tag>}
+              </button>
+            ))}
+
+            <div style={{ marginTop: '12px' }}>
+              <label style={{ fontSize: '13px', fontWeight: '600', color: '#475569', display: 'block', marginBottom: '6px' }}>Or enter custom address</label>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input
+                  type="text"
+                  value={customLoc}
+                  onChange={(e) => setCustomLoc(e.target.value)}
+                  placeholder="Street name, apartment, landmark"
+                  style={{ flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                />
+                <Button size="small" onClick={() => handleSaveLocation(customLoc)} disabled={!customLoc.trim()}>
+                  Set
+                </Button>
+              </div>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Notification Preferences Modal */}
+      {showNotifModal && (
+        <Modal
+          title="Notification preferences"
+          subtitle="Manage which alerts and updates you receive."
+          onClose={() => setShowNotifModal(false)}
+        >
+          <div style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px', background: '#f8fafc', borderRadius: '10px' }}>
+              <div>
+                <strong style={{ fontSize: '14px', display: 'block', color: '#0f172a' }}>Live GPS worker travel alerts</strong>
+                <small style={{ color: '#64748b' }}>Notify me when my assigned technician departs and reaches my door</small>
+              </div>
+              <input
+                type="checkbox"
+                checked={notifPrefs.smsTracking}
+                onChange={() => handleToggleNotif('smsTracking')}
+                style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+              />
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px', background: '#f8fafc', borderRadius: '10px' }}>
+              <div>
+                <strong style={{ fontSize: '14px', display: 'block', color: '#0f172a' }}>Booking status confirmations</strong>
+                <small style={{ color: '#64748b' }}>Updates on counter offers, acceptance, and completion</small>
+              </div>
+              <input
+                type="checkbox"
+                checked={notifPrefs.bookingUpdates}
+                onChange={() => handleToggleNotif('bookingUpdates')}
+                style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+              />
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px', background: '#f8fafc', borderRadius: '10px' }}>
+              <div>
+                <strong style={{ fontSize: '14px', display: 'block', color: '#0f172a' }}>WhatsApp invoices & receipts</strong>
+                <small style={{ color: '#64748b' }}>Receive instant digital receipts upon service completion</small>
+              </div>
+              <input
+                type="checkbox"
+                checked={notifPrefs.whatsappReceipts}
+                onChange={() => handleToggleNotif('whatsappReceipts')}
+                style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+              />
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px', background: '#f8fafc', borderRadius: '10px' }}>
+              <div>
+                <strong style={{ fontSize: '14px', display: 'block', color: '#0f172a' }}>Special offers & discounts</strong>
+                <small style={{ color: '#64748b' }}>Seasonal home repair vouchers and neighborhood promos</small>
+              </div>
+              <input
+                type="checkbox"
+                checked={notifPrefs.promotions}
+                onChange={() => handleToggleNotif('promotions')}
+                style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+              />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '10px' }}>
+              <Button onClick={() => setShowNotifModal(false)}>Done</Button>
+            </div>
+          </div>
+        </Modal>
+      )}
 
       {showPasswordModal && (
         <Modal
@@ -1625,11 +2221,29 @@ function EarningsPage({ notify }) {
     thisMonthTotal: 0,
     completedJobsCount: 0,
   });
+  const [filterMode, setFilterMode] = useState('all'); // 'all', 'high', 'recent'
 
   useEffect(() => {
     if (!user?.id) return;
     dbService.getWorkerLedger(user.id).then((data) => setLedgerData(data));
   }, [user?.id]);
+
+  const displayedTransactions = useMemo(() => {
+    let list = [...ledgerData.transactions];
+    if (filterMode === 'high') {
+      list.sort((a, b) => (b.amount || 0) - (a.amount || 0));
+    } else if (filterMode === 'recent') {
+      list.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+    }
+    return list;
+  }, [ledgerData.transactions, filterMode]);
+
+  const cycleFilter = () => {
+    const next = filterMode === 'all' ? 'high' : filterMode === 'high' ? 'recent' : 'all';
+    setFilterMode(next);
+    const label = next === 'all' ? 'All Settlements' : next === 'high' ? 'Highest Payouts First' : 'Most Recent First';
+    notify(`Ledger view updated: ${label}`);
+  };
 
   return (
     <>
@@ -1649,12 +2263,12 @@ function EarningsPage({ notify }) {
             <div className="eyebrow">TRANSACTION HISTORY</div>
             <h2>Recent earnings</h2>
           </div>
-          <button className="filter-btn" onClick={() => notify('Filtered to your settlements.')}>
-            <Filter size={15} /> Filter <ChevronDown size={14} />
+          <button className="filter-btn" onClick={cycleFilter} title="Click to cycle sorting order">
+            <Filter size={15} /> {filterMode === 'all' ? 'Filter: All' : filterMode === 'high' ? 'Sorted: Highest' : 'Sorted: Newest'} <ChevronDown size={14} />
           </button>
         </div>
-        {ledgerData.transactions.length > 0 ? (
-          ledgerData.transactions.map((t) => (
+        {displayedTransactions.length > 0 ? (
+          displayedTransactions.map((t) => (
             <div className="earning-row" key={t.id}>
               <span className="earning-check">
                 <Check size={15} />

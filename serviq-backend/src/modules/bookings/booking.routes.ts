@@ -51,6 +51,18 @@ export async function bookingRoutes(fastify: FastifyInstance) {
     handler: bookingController.listBookings.bind(bookingController),
   });
 
+  // Worker updates location during active booking
+  fastify.patch('/:id/location', {
+    preHandler: [verifyAuth, requireRoles(['WORKER'])],
+    handler: bookingController.updateWorkerLocation.bind(bookingController),
+  });
+
+  // Get live tracking information for authorized customer, worker, or admin
+  fastify.get('/:id/tracking', {
+    preHandler: [verifyAuth],
+    handler: bookingController.getBookingTracking.bind(bookingController),
+  });
+
   // Get full booking details with timeline & status history
   fastify.get('/:id', {
     preHandler: [verifyAuth],

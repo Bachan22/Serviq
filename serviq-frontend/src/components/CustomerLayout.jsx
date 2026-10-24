@@ -16,6 +16,10 @@ import {
   LogOut,
   ArrowUpRight,
   ShieldCheck,
+  Phone,
+  Mail,
+  X,
+  Check,
 } from 'lucide-react';
 
 export default function CustomerLayout({ notify }) {
@@ -23,6 +27,15 @@ export default function CustomerLayout({ notify }) {
   const navigate = useNavigate();
   const [mobileNav, setMobileNav] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [showSupportModal, setShowSupportModal] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(2);
+
+  const notifications = [
+    { id: 1, title: 'Live GPS Tracking Available', desc: 'Your technician tracking is live for active bookings.', link: '/customer/bookings', time: 'Just now' },
+    { id: 2, title: 'Booking Request Matched', desc: 'Local verified partners are reviewing nearby service requests.', link: '/customer/bookings', time: '10m ago' },
+    { id: 3, title: 'Welcome to Serviq', desc: 'Your account is verified and ready for booking everyday home services.', link: '/customer/explore', time: '1d ago' },
+  ];
 
   const handleLogout = async () => {
     await logout();
@@ -76,7 +89,14 @@ export default function CustomerLayout({ notify }) {
           </span>
         </Link>
 
-        <div className="topbar-location">
+        <div
+          className="topbar-location"
+          onClick={() => navigate('/customer/profile')}
+          style={{ cursor: 'pointer' }}
+          title="Click to view or edit saved service location"
+          role="button"
+          tabIndex={0}
+        >
           <MapPin size={16} />
           <span>
             <small>Your location</small>
@@ -88,14 +108,61 @@ export default function CustomerLayout({ notify }) {
         <div className="topbar-spacer" />
 
         {/* Notifications */}
-        <button
-          className="icon-btn notification-btn"
-          onClick={() => notify?.('You’re all caught up on notifications.')}
-          aria-label="Notifications"
-        >
-          <Bell size={18} />
-          <i />
-        </button>
+        <div className="top-profile-wrapper">
+          <button
+            className="icon-btn notification-btn"
+            onClick={() => setShowNotifications(!showNotifications)}
+            aria-label="Notifications"
+            aria-expanded={showNotifications}
+          >
+            <Bell size={18} />
+            {unreadCount > 0 && <i />}
+          </button>
+
+          {showNotifications && (
+            <div className="profile-dropdown-menu" style={{ width: '320px', right: 0, padding: '12px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                <strong style={{ fontSize: '14px', color: '#0f172a' }}>Notifications</strong>
+                {unreadCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUnreadCount(0);
+                      notify?.('All notifications marked as read.');
+                    }}
+                    style={{ background: 'none', border: 'none', fontSize: '11px', color: '#FF9900', fontWeight: '600', cursor: 'pointer' }}
+                  >
+                    Mark all read
+                  </button>
+                )}
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {notifications.map((n) => (
+                  <div
+                    key={n.id}
+                    onClick={() => {
+                      setShowNotifications(false);
+                      navigate(n.link);
+                    }}
+                    style={{
+                      padding: '8px 10px',
+                      borderRadius: '8px',
+                      background: '#f8fafc',
+                      cursor: 'pointer',
+                      borderLeft: '3px solid #FF9900',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', fontWeight: '600', color: '#0f172a' }}>
+                      <span>{n.title}</span>
+                      <small style={{ color: '#94a3b8', fontWeight: '400' }}>{n.time}</small>
+                    </div>
+                    <p style={{ margin: '3px 0 0', fontSize: '12px', color: '#64748b', lineHeight: '1.3' }}>{n.desc}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Profile Menu */}
         <div className="top-profile-wrapper">
@@ -178,7 +245,7 @@ export default function CustomerLayout({ notify }) {
               </div>
               <strong>Need assistance?</strong>
               <p>We’re here to help with your bookings and service questions.</p>
-              <button onClick={() => notify?.('Serviq customer support team is available 24/7.')}>
+              <button onClick={() => setShowSupportModal(true)}>
                 Contact support <ArrowUpRight size={14} />
               </button>
             </div>
@@ -208,6 +275,45 @@ export default function CustomerLayout({ notify }) {
           </footer>
         </main>
       </div>
+
+      {showSupportModal && (
+        <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && setShowSupportModal(false)}>
+          <div className="modal-card" role="dialog" aria-modal="true" aria-label="Customer Support">
+            <div className="modal-header">
+              <div>
+                <h2>Customer Support</h2>
+                <p>We are here to assist with bookings, live tracking, and technicians.</p>
+              </div>
+              <button className="icon-btn" onClick={() => setShowSupportModal(false)} aria-label="Close dialog">
+                <X size={19} />
+              </button>
+            </div>
+            <div style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', background: '#f8fafc', borderRadius: '10px' }}>
+                <Phone size={20} color="#FF9900" />
+                <div>
+                  <strong style={{ fontSize: '14px', display: 'block', color: '#0f172a' }}>Direct Phone Helpline</strong>
+                  <a href="tel:+918000073784" style={{ fontSize: '13px', color: '#FF9900', textDecoration: 'none' }}>+91 80000 SERVIQ (73784)</a>
+                  <small style={{ display: 'block', color: '#94a3b8' }}>Mon–Sun, 7:00 AM – 11:00 PM IST</small>
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', background: '#f8fafc', borderRadius: '10px' }}>
+                <Mail size={20} color="#FF9900" />
+                <div>
+                  <strong style={{ fontSize: '14px', display: 'block', color: '#0f172a' }}>Email Support</strong>
+                  <a href="mailto:support@serviq.in" style={{ fontSize: '13px', color: '#FF9900', textDecoration: 'none' }}>support@serviq.in</a>
+                  <small style={{ display: 'block', color: '#94a3b8' }}>Average response time under 15 minutes</small>
+                </div>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '8px' }}>
+                <button className="btn primary small" onClick={() => setShowSupportModal(false)}>
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

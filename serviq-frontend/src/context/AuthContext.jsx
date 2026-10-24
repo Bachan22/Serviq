@@ -67,6 +67,19 @@ export function AuthProvider({ children }) {
     return updated;
   };
 
+  const updateUser = (updatedFields) => {
+    setUser((prev) => {
+      if (!prev) return null;
+      const updated = { ...prev, ...updatedFields };
+      try {
+        localStorage.setItem('serviq_session_user', JSON.stringify(updated));
+      } catch (e) {
+        console.error('Failed to save session user:', e);
+      }
+      return updated;
+    });
+  };
+
   const value = {
     user,
     role: user?.role || null,
@@ -79,6 +92,7 @@ export function AuthProvider({ children }) {
     changePassword,
     logout,
     updateRates,
+    updateUser,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

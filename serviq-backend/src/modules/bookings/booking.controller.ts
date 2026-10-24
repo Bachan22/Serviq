@@ -7,6 +7,7 @@ import {
   updateBookingStatusSchema,
   cancelBookingSchema,
   listBookingsQuerySchema,
+  updateBookingLocationSchema,
 } from './booking.schemas';
 
 export class BookingController {
@@ -103,6 +104,28 @@ export class BookingController {
     return reply.status(200).send({
       success: true,
       data: broadcasts,
+    });
+  }
+
+  async getBookingTracking(request: FastifyRequest, reply: FastifyReply) {
+    const userId = request.user.id;
+    const userRole = request.user.roles.includes('WORKER') ? 'WORKER' : 'CUSTOMER';
+    const { id } = request.params as { id: string };
+    const tracking = await bookingService.getBookingTracking(userId, userRole, id);
+    return reply.status(200).send({
+      success: true,
+      data: tracking,
+    });
+  }
+
+  async updateWorkerLocation(request: FastifyRequest, reply: FastifyReply) {
+    const workerId = request.user.id;
+    const { id } = request.params as { id: string };
+    const input = updateBookingLocationSchema.parse(request.body);
+    const result = await bookingService.updateBookingWorkerLocation(workerId, id, input.latitude, input.longitude);
+    return reply.status(200).send({
+      success: true,
+      data: result,
     });
   }
 }

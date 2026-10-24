@@ -9,6 +9,7 @@ export const users = pgTable('users', {
   isPhoneVerified: boolean('is_phone_verified').notNull().default(false),
   isEmailVerified: boolean('is_email_verified').notNull().default(false),
   status: varchar('status', { length: 30 }).notNull().default('ACTIVE'), // 'ACTIVE', 'SUSPENDED', 'DEACTIVATED'
+  isDemo: boolean('is_demo').notNull().default(false),
   lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().default(sql`CURRENT_TIMESTAMP`),
