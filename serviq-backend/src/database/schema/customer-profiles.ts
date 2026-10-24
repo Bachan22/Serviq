@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, text, timestamp } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, text, timestamp, doublePrecision, boolean } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { users } from './users';
 
@@ -8,6 +8,10 @@ export const customerProfiles = pgTable('customer_profiles', {
   bio: text('bio'),
   avatarUrl: text('avatar_url'),
   emergencyPhone: varchar('emergency_phone', { length: 20 }),
+  latitude: doublePrecision('latitude'),
+  longitude: doublePrecision('longitude'),
+  area: text('area'),
+  isDemo: boolean('is_demo').notNull().default(false),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().default(sql`CURRENT_TIMESTAMP`),
 });

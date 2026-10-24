@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, text, numeric, jsonb, doublePrecision, timestamp } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, text, numeric, jsonb, doublePrecision, timestamp, boolean } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { customerProfiles } from './customer-profiles';
 import { workerProfiles } from './worker-profiles';
@@ -12,6 +12,11 @@ export const bookings = pgTable('bookings', {
   workerId: uuid('worker_id').references(() => workerProfiles.id, { onDelete: 'set null' }),
   categoryId: uuid('category_id').notNull().references(() => serviceCategories.id, { onDelete: 'restrict' }),
   addressId: uuid('address_id').references(() => addresses.id, { onDelete: 'set null' }),
+  title: varchar('title', { length: 255 }),
+  description: text('description'),
+  budget: numeric('budget', { precision: 10, scale: 2 }),
+  area: text('area'),
+  isDemo: boolean('is_demo').notNull().default(false),
   serviceAddressText: text('service_address_text').notNull(),
   serviceLatitude: doublePrecision('service_latitude').notNull(),
   serviceLongitude: doublePrecision('service_longitude').notNull(),

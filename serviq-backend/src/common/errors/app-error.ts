@@ -56,7 +56,7 @@ export class ValidationError extends AppError {
 }
 
 export class TooManyRequestsError extends AppError {
-  constructor(message: string = 'Too many requests. Please try again later.', errorCode: string = 'TOO_MANY_REQUESTS') {
-    super(message, 429, errorCode);
+  constructor(message: string = 'Too many requests. Please try again later.', errorCode: string = 'TOO_MANY_REQUESTS', details?: unknown) {
+    super(message, 429, errorCode, details);
   }
 }

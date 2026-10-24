@@ -11,10 +11,12 @@ export const reviews = pgTable('reviews', {
   workerId: uuid('worker_id').notNull().references(() => workerProfiles.id, { onDelete: 'cascade' }),
   rating: integer('rating').notNull(), // 1 to 5
   reviewText: text('review_text'),
+  comment: text('comment'),
   categoryRatings: jsonb('category_ratings').default({}), // e.g. { punctuality: 5, quality: 5, behavior: 5 }
   workerReply: text('worker_reply'),
   workerRepliedAt: timestamp('worker_replied_at', { withTimezone: true }),
   isPublished: boolean('is_published').notNull().default(true),
+  isDemo: boolean('is_demo').notNull().default(false),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().default(sql`CURRENT_TIMESTAMP`),
 });

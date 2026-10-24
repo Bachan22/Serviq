@@ -11,6 +11,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/database/migrate.ts",
     "db:seed": "tsx src/database/seeds/catalog-seed.ts",
+    "seed": "tsx src/database/seeds/dynamic-demo-seed.ts",
+    "seed:clean": "tsx src/database/seeds/clean-demo-seed.ts",
     "db:studio": "drizzle-kit studio",
     "test": "vitest run --fileParallelism=false",
     "test:watch": "vitest"

@@ -3,7 +3,10 @@ import { UnauthorizedError, ForbiddenError } from '../errors/app-error.js';
 
 export interface AuthUserPayload {
   id: string;
-  phoneNumber: string;
+  phoneNumber?: string;
+  email?: string;
+  role?: string;
+  fullName?: string;
   roles: string[];
 }
 

@@ -17,3 +17,5 @@ export * from './payments';
 export * from './payout-requests';
 export * from './reviews';
 export * from './worker-documents';
+export * from './saved-workers';
+export * from './job-offers';
