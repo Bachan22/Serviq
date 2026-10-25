@@ -6,6 +6,7 @@ export async function catalogRoutes(fastify: FastifyInstance) {
   // Public category discovery
   fastify.get('/categories', catalogController.listCategories.bind(catalogController));
   fastify.get('/categories/:slug', catalogController.getCategoryBySlug.bind(catalogController));
+  fastify.get('/service-issues', catalogController.listServiceIssues.bind(catalogController));
 
   // Admin-only management
   fastify.post('/categories', {

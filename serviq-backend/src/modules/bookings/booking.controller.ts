@@ -1,5 +1,5 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
-import { bookingService } from './booking.service';
+import { bookingService } from './booking.service.js';
 import {
   createDirectBookingSchema,
   createBroadcastBookingSchema,
@@ -8,7 +8,9 @@ import {
   cancelBookingSchema,
   listBookingsQuerySchema,
   updateBookingLocationSchema,
-} from './booking.schemas';
+  createJobOfferSchema,
+  counterJobOfferSchema,
+} from './booking.schemas.js';
 
 export class BookingController {
   async createDirectBooking(request: FastifyRequest, reply: FastifyReply) {
@@ -41,6 +43,58 @@ export class BookingController {
     });
   }
 
+  async createOffer(request: FastifyRequest, reply: FastifyReply) {
+    const workerId = request.user.id;
+    const { id } = request.params as { id: string };
+    const { price, kind } = createJobOfferSchema.parse(request.body);
+    const offer = await bookingService.createOffer(workerId, id, price, kind);
+    return reply.status(201).send({
+      success: true,
+      data: offer,
+    });
+  }
+
+  async getJobOffers(request: FastifyRequest, reply: FastifyReply) {
+    const userId = request.user.id;
+    const { id } = request.params as { id: string };
+    const offers = await bookingService.getJobOffers(userId, id);
+    return reply.status(200).send({
+      success: true,
+      data: offers,
+    });
+  }
+
+  async acceptJobOffer(request: FastifyRequest, reply: FastifyReply) {
+    const customerId = request.user.id;
+    const { id, offerId } = request.params as { id: string; offerId: string };
+    const accepted = await bookingService.acceptJobOffer(customerId, id, offerId);
+    return reply.status(200).send({
+      success: true,
+      data: accepted,
+    });
+  }
+
+  async rejectJobOffer(request: FastifyRequest, reply: FastifyReply) {
+    const customerId = request.user.id;
+    const { id, offerId } = request.params as { id: string; offerId: string };
+    const rejected = await bookingService.rejectJobOffer(customerId, id, offerId);
+    return reply.status(200).send({
+      success: true,
+      data: rejected,
+    });
+  }
+
+  async customerCounterOffer(request: FastifyRequest, reply: FastifyReply) {
+    const customerId = request.user.id;
+    const { id, offerId } = request.params as { id: string; offerId: string };
+    const { price } = counterJobOfferSchema.parse(request.body);
+    const counter = await bookingService.customerCounterOffer(customerId, id, offerId, price);
+    return reply.status(200).send({
+      success: true,
+      data: counter,
+    });
+  }
+
   async workerRespondDirect(request: FastifyRequest, reply: FastifyReply) {
     const workerId = request.user.id;
     const { id } = request.params as { id: string };
@@ -55,11 +109,21 @@ export class BookingController {
   async updateBookingStatus(request: FastifyRequest, reply: FastifyReply) {
     const workerId = request.user.id;
     const { id } = request.params as { id: string };
-    const { status } = updateBookingStatusSchema.parse(request.body);
-    const updated = await bookingService.updateBookingStatus(workerId, id, status);
+    const { status, startCode } = updateBookingStatusSchema.parse(request.body);
+    const updated = await bookingService.updateBookingStatus(workerId, id, status, startCode);
     return reply.status(200).send({
       success: true,
       data: updated,
+    });
+  }
+
+  async confirmCompletion(request: FastifyRequest, reply: FastifyReply) {
+    const customerId = request.user.id;
+    const { id } = request.params as { id: string };
+    const completed = await bookingService.confirmCompletion(customerId, id);
+    return reply.status(200).send({
+      success: true,
+      data: completed,
     });
   }
 

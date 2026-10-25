@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect } from 'react';
-import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from './context/AuthContext.jsx';
 import { RequireRole, LoadingScreen } from './components/RouteGuards.jsx';
 import CustomerLayout from './components/CustomerLayout.jsx';
@@ -10,9 +10,16 @@ import ForgotPasswordPage from './pages/auth/ForgotPasswordPage.jsx';
 import ResetPasswordPage from './pages/auth/ResetPasswordPage.jsx';
 import WorkerRatesPage from './pages/worker/WorkerRatesPage.jsx';
 import ErrorBoundary from './components/ErrorBoundary.jsx';
-import { dbService } from './api/database.js';
+import { dbService, getServiceIssues } from './api/database.js';
 import LiveTrackingModal from './components/LiveTrackingModal.jsx';
 import MessagesPage from './pages/MessagesPage.jsx';
+import MapFirstHero from './components/map/MapFirstHero.jsx';
+import WorkerProfileModal from './components/WorkerProfileModal.jsx';
+import VoiceInputButton from './components/voice/VoiceInputButton.jsx';
+import CustomerOffersModal from './components/CustomerOffersModal.jsx';
+import CustomerJobStepper from './components/CustomerJobStepper.jsx';
+import StartCodeModal from './components/StartCodeModal.jsx';
+import { bookingApi } from './api/booking.js';
 
 import {
   Search, MapPin, ChevronDown, ArrowUpRight, ArrowRight, Star, ShieldCheck,
@@ -20,7 +27,7 @@ import {
   CalendarDays, TrendingUp, Check, X, Plus, Minus, SlidersHorizontal,
   CircleDollarSign, Phone, Send, BadgeCheck, House, Heart, Filter,
   ClipboardList, CircleCheckBig, Timer, Shield, UserRound, BriefcaseBusiness,
-  Wallet, MessageCircle, Navigation
+  Wallet, MessageCircle, Navigation, AlertCircle, KeyRound
 } from 'lucide-react';
 
 function money(n) { return '₹' + Number(n || 0).toLocaleString('en-IN'); }
@@ -42,9 +49,11 @@ function RootIndexRedirect() {
 
 export default function App() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('All services');
   const [modal, setModal] = useState(null);
+  const [negotiationHistoryBookingId, setNegotiationHistoryBookingId] = useState(null);
   const [toast, setToast] = useState('');
   const [bookings, setBookings] = useState([]);
   const [jobs, setJobs] = useState([]);
@@ -55,24 +64,65 @@ export default function App() {
   const [workers, setWorkers] = useState([]);
   const [categoryCounts, setCategoryCounts] = useState({});
   const [selectedWorker, setSelectedWorker] = useState(null);
+  const [pricingMode, setPricingMode] = useState('listed'); // 'listed' | 'negotiate'
+  const [proposedPrice, setProposedPrice] = useState(350);
+  const [counterPrice, setCounterPrice] = useState(400);
+  const [startCodeJob, setStartCodeJob] = useState(null);
+  const [startCodeError, setStartCodeError] = useState(null);
+  const [startCodeLockedUntil, setStartCodeLockedUntil] = useState(null);
+  const [isVerifyingCode, setIsVerifyingCode] = useState(false);
+  const [activeOffersJobId, setActiveOffersJobId] = useState(null);
   const [bookingForm, setBookingForm] = useState({
-    service: 'Plumbing',
+    service: 'AC repair',
+    issue: 'Not cooling',
     date: 'Today',
-    time: 'As soon as possible',
+    time: 'Morning · 9 AM – 12 PM',
     address: 'Bhayandar West, Mumbai',
     details: ''
   });
-  const [counterPrice, setCounterPrice] = useState(380);
+  const [isSubmittingBooking, setIsSubmittingBooking] = useState(false);
+  const [bookingError, setBookingError] = useState('');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [viewingWorkerProfile, setViewingWorkerProfile] = useState(null);
+
+  // Sync ?worker=<id> query parameter with profile modal
+  useEffect(() => {
+    const workerIdParam = searchParams.get('worker');
+    if (workerIdParam) {
+      setViewingWorkerProfile({ id: workerIdParam });
+    }
+  }, [searchParams]);
+
+  const openWorkerProfile = (worker) => {
+    if (!worker) return;
+    setViewingWorkerProfile(worker);
+  };
+
+  const closeWorkerProfile = () => {
+    setViewingWorkerProfile(null);
+    if (searchParams.has('worker')) {
+      searchParams.delete('worker');
+      setSearchParams(searchParams, { replace: true });
+    }
+  };
 
   const notify = (message) => { setToast(message); window.setTimeout(() => setToast(''), 2800); };
 
   // Fetch Customer Side dynamic workers and category counts
   const loadCustomerData = async () => {
     try {
-      const counts = await dbService.getCategoryCounts();
+      const custLat = user?.latitude || 19.298;
+      const custLng = user?.longitude || 72.855;
+      const counts = await dbService.getCategoryCounts(custLat, custLng, 5);
       setCategoryCounts(counts);
 
-      const list = await dbService.getNearbyWorkers({ category, search });
+      const list = await dbService.getNearbyWorkers({
+        lat: custLat,
+        lng: custLng,
+        radiusKm: 5,
+        category,
+        search,
+      });
       setWorkers(list);
 
       if (user?.id && user.role === 'customer') {
@@ -94,94 +144,334 @@ export default function App() {
       const stats = await dbService.getWorkerDashboardStats(user.id);
       setDashboardStats(stats);
 
-      const storeJobs = JSON.parse(localStorage.getItem('serviq_db_jobs') || '[]');
-      const active = storeJobs.filter(
-        (j) => j.acceptedWorkerId === user.id && ['accepted', 'on_the_way', 'arrived', 'in_progress'].includes(j.status)
-      );
+      let active = [];
+      if (import.meta.env?.VITE_DEMO_LOCAL !== 'true') {
+        const res = await bookingApi.listBookings();
+        const list = res?.bookings || (Array.isArray(res) ? res : []);
+        active = list.filter((j) =>
+          ['ACCEPTED', 'ON_THE_WAY', 'ARRIVED', 'IN_PROGRESS', 'PAYMENT_PENDING'].includes(j.status?.toUpperCase())
+        );
+      } else {
+        const storeJobs = JSON.parse(localStorage.getItem('serviq_db_jobs') || '[]');
+        active = storeJobs.filter(
+          (j) => j.acceptedWorkerId === user.id && ['accepted', 'on_the_way', 'arrived', 'in_progress', 'payment_pending'].includes(j.status?.toLowerCase())
+        );
+      }
+
       setActiveJobs(
-        active.map((j) => ({
-          id: j.id,
-          title: j.title || `${j.service} service`,
-          category: j.service || j.category,
-          customer: j.customerName || 'Customer',
-          location: j.location || j.area || 'Nearby',
-          price: Number(j.agreedPrice || j.budget || j.price || 400),
-          status: j.status,
-          rawStatus: j.status,
-          latitude: j.latitude,
-          longitude: j.longitude,
-          workerLatitude: j.workerLatitude,
-          workerLongitude: j.workerLongitude,
-          time: j.timeAgo || 'In progress',
-          initials: (j.customerName || 'CU').slice(0, 2).toUpperCase(),
-          details: j.description || '',
-        }))
+        active.map((j) => {
+          const rawStatus = (j.status || 'accepted').toLowerCase();
+          return {
+            id: j.id,
+            bookingNumber: j.bookingNumber || j.id?.slice(0, 8),
+            title: j.title || `${j.categoryName || j.service || j.category || 'Home'} service`,
+            category: j.categoryName || j.service || j.category || 'Home Services',
+            customer: j.customer?.fullName || j.customerName || 'Customer',
+            location: j.serviceAddressText || j.location || j.area || 'Nearby address',
+            price: Number(j.finalTotalPrice || j.agreedLaborPrice || j.agreedPrice || j.budget || j.price || 400),
+            status: rawStatus,
+            rawStatus: rawStatus,
+            latitude: j.serviceLatitude || j.latitude || 19.298,
+            longitude: j.serviceLongitude || j.longitude || 72.855,
+            workerLatitude: j.workerLatitude,
+            workerLongitude: j.workerLongitude,
+            time: 'In progress',
+            initials: (j.customer?.fullName || j.customerName || 'CU').slice(0, 2).toUpperCase(),
+            details: j.description || j.details || '',
+            startCodeAttempts: j.startCodeAttempts,
+            startCodeLockedUntil: j.startCodeLockedUntil,
+          };
+        })
       );
     } catch (err) {
       console.error('Error loading worker data:', err);
     }
   };
 
+  // Invalidate and reset private state whenever authenticated user changes or logs out
+  useEffect(() => {
+    if (!user?.id) {
+      setBookings([]);
+      setJobs([]);
+      setActiveJobs([]);
+      setDashboardStats(null);
+    } else if (user.role === 'customer') {
+      setJobs([]);
+      setActiveJobs([]);
+      setDashboardStats(null);
+    } else if (user.role === 'worker') {
+      setBookings([]);
+      setJobs([]);
+      setActiveJobs([]);
+      setDashboardStats(null);
+    }
+  }, [user?.id, user?.role]);
+
   useEffect(() => {
     loadCustomerData();
-    const interval = setInterval(loadCustomerData, 5000);
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      loadCustomerData();
+    }, 4000);
     return () => clearInterval(interval);
   }, [category, search, user?.id]);
 
   useEffect(() => {
     if (user?.role === 'worker' && user?.id) {
       loadWorkerData();
-      const interval = setInterval(loadWorkerData, 3000);
+      const interval = setInterval(() => {
+        if (typeof document !== 'undefined' && document.hidden) return;
+        loadWorkerData();
+      }, 3500);
       return () => clearInterval(interval);
     }
   }, [user?.id, user?.role]);
 
-  const openBooking = (worker, service) => {
-    setSelectedWorker(worker);
-    setBookingForm((f) => ({
-      ...f,
-      service: service || (worker?.job ? worker.job.split(' ')[0] : 'Plumbing'),
+  const dateOptions = useMemo(() => {
+    const options = [];
+    const now = new Date();
+    const istTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(istTime);
+      d.setDate(istTime.getDate() + i);
+      const dayLabel = i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : d.toLocaleDateString('en-IN', { weekday: 'short', timeZone: 'Asia/Kolkata' });
+      const dateFormatted = d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' });
+      options.push({
+        value: d.toISOString().split('T')[0],
+        label: `${dayLabel} (${dateFormatted})`,
+      });
+    }
+    return options;
+  }, []);
+
+  const workerSkills = useMemo(() => {
+    if (!selectedWorker) return [];
+    const list = [];
+    const primary = selectedWorker.skill || selectedWorker.job?.replace(/ specialist| partner| pro/i, '').trim() || 'AC repair';
+    list.push(primary);
+    if (Array.isArray(selectedWorker.secondarySkills)) {
+      selectedWorker.secondarySkills.forEach((s) => {
+        if (s && !list.includes(s)) list.push(s);
+      });
+    }
+    return list;
+  }, [selectedWorker]);
+
+  const availableCategories = useMemo(() => {
+    const allServices = ['Plumbing', 'Electrical', 'Cleaning', 'Painting', 'AC repair', 'Carpentry', 'Cooking'];
+    return allServices
+      .map((name) => ({
+        name,
+        count: Number(categoryCounts[name] || 0),
+      }))
+      .filter((cat) => cat.count > 0);
+  }, [categoryCounts]);
+
+  const currentIssues = useMemo(() => {
+    return getServiceIssues(bookingForm.service);
+  }, [bookingForm.service]);
+
+  const handleServiceChange = (newService) => {
+    const issues = getServiceIssues(newService);
+    setBookingForm((prev) => ({
+      ...prev,
+      service: newService,
+      issue: issues[0] || 'General inspection & diagnosis',
     }));
+  };
+
+  const openBooking = (
+    worker,
+    initialModeOrService = 'listed',
+    initialDescription = '',
+    initialAddress = ''
+  ) => {
+    setSelectedWorker(worker);
+    setBookingError('');
+    setIsSubmittingBooking(false);
+
+    let mode = 'listed';
+    let service = '';
+
+    if (typeof initialModeOrService === 'string') {
+      if (initialModeOrService === 'negotiate' || initialModeOrService === 'listed') {
+        mode = initialModeOrService;
+      } else {
+        service = initialModeOrService;
+      }
+    }
+
+    const workerPrice = Number(worker?.price || worker?.hourlyRate || 350);
+    setPricingMode(mode);
+    const defaultLowerOffer = Math.max(100, Math.round((workerPrice * 0.85) / 10) * 10);
+    setProposedPrice(mode === 'negotiate' ? defaultLowerOffer : workerPrice);
+
+    let initialService = 'AC repair';
+    if (worker) {
+      initialService = worker.skill || worker.category || service || (worker.job ? worker.job.replace(/ specialist| partner| pro/i, '').trim() : 'AC repair');
+    } else if (service && service !== 'All services') {
+      initialService = service;
+    } else {
+      const avail = availableCategories.length > 0 ? availableCategories[0].name : 'AC repair';
+      initialService = avail;
+    }
+
+    const issues = getServiceIssues(initialService);
+    let initialIssue = issues[0] || 'General inspection & diagnosis';
+    if (initialDescription) {
+      const matched = issues.find((i) =>
+        i.toLowerCase().includes(initialDescription.toLowerCase()) ||
+        initialDescription.toLowerCase().includes(i.toLowerCase())
+      );
+      if (matched) initialIssue = matched;
+    }
+
+    const initialDate = dateOptions[0]?.value || 'Today';
+
+    setBookingForm({
+      service: initialService,
+      issue: initialIssue,
+      date: initialDate,
+      time: 'Morning · 9 AM – 12 PM',
+      address: initialAddress || user?.city || user?.area || 'Bhayandar West, Mumbai',
+      details: initialDescription || '',
+      budget: 400,
+    });
     setModal('booking');
   };
 
+  const openPostJob = (defaultCategory) => {
+    openBooking(null, defaultCategory);
+  };
+
   const confirmBooking = async () => {
+    if (isSubmittingBooking) return;
+    setBookingError('');
+
+    if (!bookingForm.address || !bookingForm.address.trim()) {
+      setBookingError('Please enter a service address.');
+      return;
+    }
+
+    const token = typeof window !== 'undefined' ? localStorage.getItem('serviq_access_token') : null;
+    if (!user || !token) {
+      setBookingError('Please sign in or create an account to book a professional.');
+      notify('Please sign in to complete your booking.');
+      return;
+    }
+
+    if (user.role === 'worker') {
+      setBookingError('You are signed in as a Worker. Please switch to or register a Customer account to book services.');
+      return;
+    }
+
     try {
-      const customerId = user?.id || 'guest-customer';
-      const customerName = user?.fullName || 'Valued Customer';
-      const budget = selectedWorker?.price || 400;
+      setIsSubmittingBooking(true);
+      const customerId = user.id;
+      const customerName = user.fullName || 'Valued Customer';
 
-      await dbService.postJob({
-        customerId,
-        customerName,
-        service: bookingForm.service,
-        title: `${bookingForm.service} service`,
-        budget,
-        address: bookingForm.address,
-        details: bookingForm.details,
-      });
+      if (selectedWorker) {
+        // Direct booking mode: listed rate or proposed lower offer
+        const workerPrice = Number(selectedWorker.price || selectedWorker.hourlyRate || 350);
+        const finalPrice = pricingMode === 'negotiate' ? Number(proposedPrice || workerPrice) : workerPrice;
 
-      setModal(null);
-      notify('Booking request submitted to nearby professionals.');
+        await dbService.createDirectBooking({
+          customerId,
+          customerName,
+          workerId: selectedWorker.id,
+          service: bookingForm.service,
+          issue: bookingForm.issue,
+          budget: finalPrice,
+          pricingMode,
+          address: bookingForm.address,
+          details: bookingForm.details,
+          date: bookingForm.date,
+          time: bookingForm.time,
+        });
+
+        setModal(null);
+        if (pricingMode === 'negotiate') {
+          notify(`Offer of ₹${finalPrice} submitted to ${selectedWorker.name}!`);
+        } else {
+          notify(`Booking confirmed directly with ${selectedWorker.name} at ₹${finalPrice}!`);
+        }
+      } else {
+        // Post a job mode
+        await dbService.postJob({
+          customerId,
+          customerName,
+          service: bookingForm.service,
+          issue: bookingForm.issue,
+          budget: Number(bookingForm.budget) || 400,
+          address: bookingForm.address,
+          details: bookingForm.details,
+          date: bookingForm.date,
+          time: bookingForm.time,
+        });
+
+        setModal(null);
+        notify('Job request posted! Nearby matching professionals will be notified.');
+      }
+
       await loadCustomerData();
+      if (user?.role === 'worker') {
+        await loadWorkerData();
+      }
     } catch (err) {
-      notify(err.message || 'Failed to submit booking.');
+      console.error('Booking submission error:', err);
+      const isAuthErr =
+        err.status === 401 ||
+        err.message?.toLowerCase().includes('token') ||
+        err.message?.toLowerCase().includes('unauthorized') ||
+        err.message?.toLowerCase().includes('expired');
+
+      if (isAuthErr) {
+        setBookingError('Your session has expired. Please sign in again to confirm this booking.');
+        notify('Your session has expired. Please sign in again.');
+      } else {
+        setBookingError(err.message || 'Failed to submit booking. Please try again.');
+      }
+    } finally {
+      setIsSubmittingBooking(false);
     }
   };
 
   const acceptJob = async (job) => {
     try {
-      await dbService.acceptJob(user.id, job.id);
-      notify(`You have accepted job ${job.id}.`);
+      if (job.isCustomerOffer && job.pendingOfferId) {
+        await dbService.workerAcceptCustomerOffer(user.id, job.id, job.pendingOfferId);
+        notify(`Accepted customer offer of ${money(job.price)}! Booking confirmed.`);
+      } else {
+        await dbService.acceptJob(user.id, job.id);
+        notify(`You have accepted job ${job.id}.`);
+      }
       await loadWorkerData();
     } catch (err) {
       notify(err.message || 'Failed to accept job.');
     }
   };
 
+  const declineJob = async (job) => {
+    try {
+      if (job.isCustomerOffer && job.pendingOfferId) {
+        await dbService.workerRejectCustomerOffer(user.id, job.id, job.pendingOfferId);
+        notify(`Declined customer offer for ${job.title}.`);
+      } else {
+        notify(`Job ${job.id} declined.`);
+      }
+      await loadWorkerData();
+    } catch (err) {
+      notify(err.message || 'Failed to decline job.');
+    }
+  };
+
   const sendCounter = (job) => {
     setSelectedWorker(job);
-    setCounterPrice(job.price ? Math.max(100, job.price - 50) : 350);
+    const listed = Number(job.originalPrice || 350);
+    const offered = Number(job.price || 300);
+    // If worker listed rate is 350 and customer offered 300, compromise at 325!
+    const defaultCounter = offered < listed ? Math.round((offered + listed) / 2) : (offered + 25);
+    setCounterPrice(defaultCounter);
     setModal('counter');
   };
 
@@ -258,20 +548,36 @@ export default function App() {
     }
   };
 
-  const startWorkAction = async (job) => {
+  const startWorkAction = (job) => {
+    setStartCodeJob(job);
+    setStartCodeError(null);
+    setStartCodeLockedUntil(job.startCodeLockedUntil || null);
+  };
+
+  const handleVerifyStartCode = async (code) => {
+    if (!startCodeJob) return;
+    setIsVerifyingCode(true);
+    setStartCodeError(null);
     try {
-      await dbService.updateJobStatus(job.id, 'in_progress', user.id);
-      notify('Service underway: Job marked in progress.');
+      await dbService.updateJobStatus(startCodeJob.id, 'in_progress', user.id, code);
+      notify('Service underway: 4-digit start code verified successfully!');
+      setStartCodeJob(null);
       await loadWorkerData();
     } catch (err) {
-      notify(err.message || 'Failed to start job.');
+      const errMsg = err.message || 'Failed to verify start code.';
+      setStartCodeError(errMsg);
+      if (err.data?.lockedUntil || errMsg.toLowerCase().includes('locked')) {
+        setStartCodeLockedUntil(err.data?.lockedUntil || new Date(Date.now() + 10 * 60 * 1000).toISOString());
+      }
+    } finally {
+      setIsVerifyingCode(false);
     }
   };
 
   const completeJobAction = async (job) => {
     try {
-      await dbService.updateJobStatus(job.id, 'completed', user.id);
-      notify(`Job ${job.id} marked as completed! Payout credited to your ledger.`);
+      await dbService.updateJobStatus(job.id, 'payment_pending', user.id);
+      notify(`Job marked completed! Awaiting customer confirmation to release simulated payment.`);
       await loadWorkerData();
     } catch (err) {
       notify(err.message || 'Failed to complete job.');
@@ -310,8 +616,11 @@ export default function App() {
                 category={category}
                 setCategory={setCategory}
                 workers={workers}
+                setWorkers={setWorkers}
                 categoryCounts={categoryCounts}
                 onBook={openBooking}
+                onPostJob={openPostJob}
+                onViewProfile={openWorkerProfile}
                 liked={liked}
                 setLiked={setLiked}
                 notify={notify}
@@ -329,6 +638,8 @@ export default function App() {
                 workers={workers}
                 categoryCounts={categoryCounts}
                 onBook={openBooking}
+                onPostJob={openPostJob}
+                onViewProfile={openWorkerProfile}
                 liked={liked}
                 setLiked={setLiked}
                 notify={notify}
@@ -337,7 +648,14 @@ export default function App() {
           />
           <Route
             path="bookings"
-            element={<BookingsPage bookings={bookings} onRefresh={loadCustomerData} />}
+            element={
+              <BookingsPage
+                bookings={bookings}
+                onRefresh={loadCustomerData}
+                notify={notify}
+                onViewOffers={(bookingId) => setActiveOffersJobId(bookingId)}
+              />
+            }
           />
           <Route path="messages" element={<MessagesPage notify={notify} />} />
           <Route
@@ -348,6 +666,7 @@ export default function App() {
                 liked={liked}
                 setLiked={setLiked}
                 onBook={openBooking}
+                onViewProfile={openWorkerProfile}
               />
             }
           />
@@ -374,6 +693,8 @@ export default function App() {
                 dashboardStats={dashboardStats}
                 onAccept={acceptJob}
                 onCounter={sendCounter}
+                onDecline={declineJob}
+                onHistory={(job) => setNegotiationHistoryBookingId(job.id)}
               />
             }
           />
@@ -384,6 +705,8 @@ export default function App() {
                 jobs={jobs}
                 onAccept={acceptJob}
                 onCounter={sendCounter}
+                onDecline={declineJob}
+                onHistory={(job) => setNegotiationHistoryBookingId(job.id)}
                 notify={notify}
               />
             }
@@ -416,9 +739,16 @@ export default function App() {
       {/* Booking Modal */}
       {modal === 'booking' && (
         <Modal
-          title="Book a trusted professional"
-          subtitle="A few details help us connect you with the right specialist."
-          onClose={() => setModal(null)}
+          title={selectedWorker ? "Book a trusted professional" : "Post a service request"}
+          subtitle={
+            selectedWorker
+              ? `Direct request to ${selectedWorker.name}`
+              : "A few details help us connect you with available nearby specialists."
+          }
+          onClose={() => {
+            setModal(null);
+            setBookingError('');
+          }}
         >
           {selectedWorker && (
             <div className="booking-worker">
@@ -438,76 +768,385 @@ export default function App() {
                 </span>
               </div>
               <div className="booking-price">
-                <small>Starting at</small>
-                <strong>{money(selectedWorker.price)}</strong>
+                <small>Visit & Diagnosis Fee</small>
+                <strong>{money(selectedWorker.price || selectedWorker.hourlyRate || 350)}</strong>
               </div>
             </div>
           )}
+
+          {selectedWorker && (
+            <div className="booking-pricing-container">
+              <div className="booking-pricing-modes" role="radiogroup" aria-label="Booking pricing option">
+                <div
+                  className={`booking-price-card ${pricingMode === 'listed' ? 'active' : ''}`}
+                  onClick={() => setPricingMode('listed')}
+                >
+                  <div className="booking-price-card-radio">
+                    <input
+                      type="radio"
+                      name="bookingPricingMode"
+                      checked={pricingMode === 'listed'}
+                      onChange={() => setPricingMode('listed')}
+                    />
+                  </div>
+                  <div className="booking-price-card-body">
+                    <div className="booking-price-card-title-row">
+                      <strong>Book at Listed Price</strong>
+                      <span className="booking-price-card-tag">{money(selectedWorker.price || selectedWorker.hourlyRate || 350)}</span>
+                    </div>
+                    <p>Book directly at the specialist's configured rate for visit & diagnosis.</p>
+                  </div>
+                </div>
+
+                <div
+                  className={`booking-price-card ${pricingMode === 'negotiate' ? 'active' : ''}`}
+                  onClick={() => setPricingMode('negotiate')}
+                >
+                  <div className="booking-price-card-radio">
+                    <input
+                      type="radio"
+                      name="bookingPricingMode"
+                      checked={pricingMode === 'negotiate'}
+                      onChange={() => setPricingMode('negotiate')}
+                    />
+                  </div>
+                  <div className="booking-price-card-body">
+                    <div className="booking-price-card-title-row">
+                      <strong>Submit Lower Price Offer</strong>
+                      <span className="booking-price-card-tag-accent">Negotiate</span>
+                    </div>
+                    <p>Propose your budget to {selectedWorker.name}. They will review and can accept or counter.</p>
+
+                    {pricingMode === 'negotiate' && (
+                      <>
+                        <div className="booking-offer-input-row" onClick={(e) => e.stopPropagation()}>
+                          <label htmlFor="proposed-price-input">Your offer:</label>
+                          <div className="booking-offer-input-wrap">
+                            <span>₹</span>
+                            <input
+                              id="proposed-price-input"
+                              type="number"
+                              min="50"
+                              max={selectedWorker.price || selectedWorker.hourlyRate || 350}
+                              step="25"
+                              value={proposedPrice}
+                              onFocus={(e) => e.target.select()}
+                              onChange={(e) => setProposedPrice(Math.max(50, Number(e.target.value)))}
+                            />
+                          </div>
+                          <small>(Listed: {money(selectedWorker.price || selectedWorker.hourlyRate || 350)})</small>
+                        </div>
+                        <div className="quick-prices" style={{ marginTop: '8px', display: 'flex', gap: '6px' }} onClick={(e) => e.stopPropagation()}>
+                          {[250, 300, 325, 350].map((p) => (
+                            <button
+                              type="button"
+                              className={proposedPrice === p ? 'chosen' : ''}
+                              key={p}
+                              style={{
+                                padding: '4px 10px',
+                                borderRadius: '6px',
+                                fontSize: '12px',
+                                fontWeight: '600',
+                                border: proposedPrice === p ? '1.5px solid #0284c7' : '1px solid #cbd5e1',
+                                background: proposedPrice === p ? '#e0f2fe' : '#ffffff',
+                                color: proposedPrice === p ? '#0369a1' : '#334155',
+                                cursor: 'pointer',
+                              }}
+                              onClick={() => setProposedPrice(p)}
+                            >
+                              ₹{p}
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="booking-pricing-explanation">
+                <ShieldCheck size={14} color="#059669" />
+                <span>
+                  <strong>Inspection & Estimate Policy:</strong> Starting visit fee covers diagnosis & minor labor. Parts and major repairs are quoted on inspection.
+                </span>
+              </div>
+            </div>
+          )}
+
+          {bookingError && (
+            <div
+              style={{
+                background: '#FEF2F2',
+                border: '1px solid #FECACA',
+                color: '#991B1B',
+                padding: '10px 14px',
+                borderRadius: '8px',
+                fontSize: '13px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '8px',
+                marginBottom: '14px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <AlertCircle size={16} color="#DC2626" style={{ flexShrink: 0 }} />
+                <span>{bookingError}</span>
+              </div>
+              {(bookingError.includes('sign in') || bookingError.includes('session') || bookingError.includes('account')) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setModal(null);
+                    navigate('/login', { state: { returnTo: '/customer' } });
+                  }}
+                  style={{
+                    background: '#EA580C',
+                    color: '#FFF',
+                    border: 'none',
+                    padding: '6px 12px',
+                    borderRadius: '6px',
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  Sign in
+                </button>
+              )}
+            </div>
+          )}
+
           <div className="form-grid">
             <label>
               Service category
+              {selectedWorker ? (
+                workerSkills.length <= 1 ? (
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      padding: '8px 12px',
+                      background: '#F8FAFC',
+                      border: '1px solid #E2E8F0',
+                      borderRadius: '8px',
+                      marginTop: '4px',
+                      minHeight: '40px',
+                    }}
+                  >
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        fontSize: '13px',
+                        fontWeight: '600',
+                        color: '#92400E',
+                        background: '#FEF3C7',
+                        padding: '3px 10px',
+                        borderRadius: '6px',
+                        border: '1px solid #FDE68A',
+                      }}
+                    >
+                      <Wrench size={13} />
+                      {workerSkills[0] || bookingForm.service}
+                    </span>
+                    <small style={{ color: '#64748B', fontSize: '11px' }}>Locked to specialist's skill</small>
+                  </div>
+                ) : (
+                  <select
+                    value={bookingForm.service}
+                    onChange={(e) => handleServiceChange(e.target.value)}
+                  >
+                    {workerSkills.map((name) => (
+                      <option key={name} value={name}>{name}</option>
+                    ))}
+                  </select>
+                )
+              ) : (
+                <select
+                  value={bookingForm.service}
+                  onChange={(e) => handleServiceChange(e.target.value)}
+                >
+                  {availableCategories.length > 0 ? (
+                    availableCategories.map(({ name, count }) => (
+                      <option key={name} value={name}>
+                        {name} ({count} available nearby)
+                      </option>
+                    ))
+                  ) : (
+                    <option value={bookingForm.service}>{bookingForm.service} (No verified workers nearby)</option>
+                  )}
+                </select>
+              )}
+            </label>
+
+            <label>
+              What do you need done?
               <select
-                value={bookingForm.service}
-                onChange={(e) => setBookingForm({ ...bookingForm, service: e.target.value })}
+                value={bookingForm.issue}
+                onChange={(e) => setBookingForm({ ...bookingForm, issue: e.target.value })}
               >
-                {['Plumbing', 'Electrical', 'Cleaning', 'Painting', 'AC repair', 'Carpentry', 'Cooking'].map((name) => (
-                  <option key={name}>{name}</option>
+                {currentIssues.map((issue) => (
+                  <option key={issue} value={issue}>{issue}</option>
                 ))}
               </select>
             </label>
+
             <label>
               Preferred day
               <select
                 value={bookingForm.date}
                 onChange={(e) => setBookingForm({ ...bookingForm, date: e.target.value })}
               >
-                <option>Today</option>
-                <option>Tomorrow</option>
-                <option>This weekend</option>
+                {dateOptions.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
               </select>
             </label>
-            <label className="full-field">
+
+            <label>
               Preferred time
               <select
                 value={bookingForm.time}
                 onChange={(e) => setBookingForm({ ...bookingForm, time: e.target.value })}
               >
-                <option>As soon as possible</option>
                 <option>Morning · 9 AM – 12 PM</option>
                 <option>Afternoon · 12 PM – 4 PM</option>
                 <option>Evening · 4 PM – 8 PM</option>
               </select>
             </label>
+
             <label className="full-field">
               Service address
               <input
                 value={bookingForm.address}
                 onChange={(e) => setBookingForm({ ...bookingForm, address: e.target.value })}
-                placeholder="Enter your address"
+                placeholder="Enter your street address, apartment, or landmark"
               />
             </label>
+
+            {!selectedWorker && (
+              <label className="full-field">
+                Estimated budget (₹)
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+                  <span style={{ fontWeight: 700, color: '#475569', fontSize: '16px' }}>₹</span>
+                  <input
+                    type="number"
+                    min="50"
+                    max="20000"
+                    step="50"
+                    value={bookingForm.budget ?? 400}
+                    onChange={(e) => setBookingForm({ ...bookingForm, budget: Number(e.target.value) })}
+                    placeholder="400"
+                    style={{ flex: 1 }}
+                  />
+                  <VoiceInputButton
+                    mode="number"
+                    onResult={(amount) => {
+                      if (amount) setBookingForm((prev) => ({ ...prev, budget: amount }));
+                    }}
+                  />
+                </div>
+                {/* Fair Price Hint: from real completed bookings with at least 3 data points, hidden otherwise */}
+                {(() => {
+                  const completedMatching = bookings.filter(
+                    (b) =>
+                      (b.status === 'completed' || b.rawStatus === 'completed') &&
+                      (b.service?.toLowerCase() === bookingForm.service?.toLowerCase() ||
+                        b.category?.toLowerCase() === bookingForm.service?.toLowerCase()) &&
+                      Number(b.price) > 0
+                  );
+                  if (completedMatching.length >= 3) {
+                    const avg = Math.round(
+                      completedMatching.reduce((acc, b) => acc + Number(b.price), 0) / completedMatching.length
+                    );
+                    return (
+                      <div
+                        style={{
+                          fontSize: '12px',
+                          color: '#059669',
+                          background: '#ECFDF5',
+                          border: '1px solid #A7F3D0',
+                          padding: '6px 10px',
+                          borderRadius: '6px',
+                          marginTop: '6px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                        }}
+                      >
+                        <Sparkles size={14} color="#059669" />
+                        <span>
+                          <strong>Fair price hint:</strong> Average ~₹{avg} based on {completedMatching.length} completed {bookingForm.service} bookings in your area.
+                        </span>
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
+              </label>
+            )}
+
             <label className="full-field">
-              What needs fixing? <span className="optional">Optional</span>
-              <textarea
-                value={bookingForm.details}
-                onChange={(e) => setBookingForm({ ...bookingForm, details: e.target.value })}
-                placeholder="Describe the issue briefly…"
-                rows="3"
-              />
+              {selectedWorker ? 'Additional instructions (optional)' : 'Job description / instructions'}{' '}
+              <span className="optional">{bookingForm.details.length}/500</span>
+              <div style={{ position: 'relative', marginTop: '4px' }}>
+                <textarea
+                  value={bookingForm.details}
+                  maxLength={500}
+                  onChange={(e) => setBookingForm({ ...bookingForm, details: e.target.value.slice(0, 500) })}
+                  placeholder={
+                    selectedWorker
+                      ? 'Describe any specific symptoms, access codes, or requirements...'
+                      : 'Describe the job in detail (e.g. leaking kitchen pipe under sink)...'
+                  }
+                  rows="3"
+                  style={{ width: '100%', boxSizing: 'border-box', paddingRight: '46px' }}
+                />
+                <div style={{ position: 'absolute', bottom: '8px', right: '8px' }}>
+                  <VoiceInputButton
+                    mode="text"
+                    size="sm"
+                    onResult={(spokenText) => {
+                      if (spokenText) {
+                        setBookingForm((prev) => {
+                          const trimmed = spokenText.trim();
+                          const existing = prev.details || '';
+                          const combined = existing ? `${existing} ${trimmed}` : trimmed;
+                          return { ...prev, details: combined.slice(0, 500) };
+                        });
+                      }
+                    }}
+                  />
+                </div>
+              </div>
             </label>
           </div>
+
           <div className="modal-note">
             <ShieldCheck size={16} />
             <span>
-              By sending a booking request, nearby verified professionals matching your category and service radius will be notified in real time.
+              {selectedWorker ? (
+                <>Your request will be sent to <strong>{selectedWorker.name}</strong>.</>
+              ) : (
+                <>By posting a job request, nearby verified professionals matching your category and service radius will be notified in real time.</>
+              )}
             </span>
           </div>
+
           <div className="modal-actions">
-            <Button variant="secondary" onClick={() => setModal(null)}>
+            <Button variant="secondary" onClick={() => setModal(null)} disabled={isSubmittingBooking}>
               Cancel
             </Button>
-            <Button onClick={confirmBooking}>
-              Send booking request <ArrowRight size={15} />
+            <Button onClick={confirmBooking} disabled={isSubmittingBooking || !bookingForm.address.trim()}>
+              {isSubmittingBooking
+                ? 'Submitting...'
+                : selectedWorker
+                ? `Book ${selectedWorker.name.split(' ')[0]}`
+                : 'Send booking request'} <ArrowRight size={15} />
             </Button>
           </div>
         </Modal>
@@ -531,14 +1170,50 @@ export default function App() {
               </span>
             </div>
             <div className="counter-original">
-              <small>Listed budget</small>
-              <strong>{money(selectedWorker.price)}</strong>
+              <small>{selectedWorker.isCustomerOffer ? 'Customer proposed' : 'Customer budget'}</small>
+              <strong style={{ color: selectedWorker.isCustomerOffer ? '#16a34a' : '#0f172a' }}>
+                {money(selectedWorker.price)}
+              </strong>
+              {selectedWorker.originalPrice && (
+                <div style={{ fontSize: '11px', color: '#64748b' }}>
+                  (Listed rate: {money(selectedWorker.originalPrice)})
+                </div>
+              )}
             </div>
           </div>
-          <label className="counter-label">Your proposed price</label>
+
+          <label className="counter-label">Your proposed rate</label>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', margin: '8px 0' }}>
+            <span style={{ fontSize: '20px', fontWeight: 700, color: '#334155' }}>₹</span>
+            <input
+              type="number"
+              min="50"
+              max="50000"
+              step="5"
+              value={counterPrice}
+              onChange={(e) => setCounterPrice(Number(e.target.value))}
+              style={{
+                fontSize: '22px',
+                fontWeight: 700,
+                width: '130px',
+                textAlign: 'center',
+                padding: '6px 10px',
+                borderRadius: '8px',
+                border: '2px solid #3b82f6',
+                color: '#1e3a8a'
+              }}
+            />
+            <VoiceInputButton
+              mode="number"
+              onResult={(amount) => {
+                if (amount) setCounterPrice(amount);
+              }}
+            />
+          </div>
+
           <div className="price-stepper">
             <button
-              onClick={() => setCounterPrice((v) => Math.max(100, v - 50))}
+              onClick={() => setCounterPrice((v) => Math.max(50, v - 25))}
               aria-label="Decrease offer"
             >
               <Minus size={18} />
@@ -548,14 +1223,14 @@ export default function App() {
               <strong>{money(counterPrice)}</strong>
             </div>
             <button
-              onClick={() => setCounterPrice((v) => v + 50)}
+              onClick={() => setCounterPrice((v) => v + 25)}
               aria-label="Increase offer"
             >
               <Plus size={18} />
             </button>
           </div>
           <div className="quick-prices">
-            {[300, 350, 400, 450, 500].map((p) => (
+            {[300, 325, 350, 375, 400].map((p) => (
               <button
                 className={counterPrice === p ? 'chosen' : ''}
                 key={p}
@@ -568,7 +1243,7 @@ export default function App() {
           <div className="modal-note">
             <CircleDollarSign size={16} />
             <span>
-              Agree on a fair price before starting. The customer will review your proposed rate before confirming.
+              Agree on a fair price before starting. The customer can accept, counter (within 2 rounds limit), or decline.
             </span>
           </div>
           <div className="modal-actions">
@@ -576,10 +1251,59 @@ export default function App() {
               Cancel
             </Button>
             <Button onClick={submitCounter}>
-              Send counter-offer <Send size={15} />
+              Send counter-offer ({money(counterPrice)}) <Send size={15} />
             </Button>
           </div>
         </Modal>
+      )}
+
+      {/* Global Negotiation History Modal */}
+      {negotiationHistoryBookingId && (
+        <NegotiationHistoryModal
+          bookingId={negotiationHistoryBookingId}
+          onClose={() => setNegotiationHistoryBookingId(null)}
+        />
+      )}
+
+      {/* Worker Profile Modal */}
+      {viewingWorkerProfile && (
+        <WorkerProfileModal
+          workerId={viewingWorkerProfile.id}
+          initialWorker={viewingWorkerProfile}
+          onClose={closeWorkerProfile}
+          onBook={(workerObj, skill) => {
+            closeWorkerProfile();
+            openBooking(workerObj, skill);
+          }}
+        />
+      )}
+
+      {/* Start Code Modal for Worker */}
+      {startCodeJob && (
+        <StartCodeModal
+          job={startCodeJob}
+          onClose={() => {
+            setStartCodeJob(null);
+            setStartCodeError(null);
+          }}
+          onConfirm={handleVerifyStartCode}
+          isSubmitting={isVerifyingCode}
+          error={startCodeError}
+          lockedUntil={startCodeLockedUntil}
+        />
+      )}
+
+      {/* Customer Offers Panel Modal */}
+      {activeOffersJobId && (
+        <CustomerOffersModal
+          bookingId={activeOffersJobId}
+          onClose={() => setActiveOffersJobId(null)}
+          onOfferAccepted={() => {
+            setActiveOffersJobId(null);
+            loadCustomerData();
+            notify('Technician offer accepted! Booking confirmed.');
+          }}
+        />
       )}
 
       {/* Toast notifications */}
@@ -600,7 +1324,7 @@ export default function App() {
 
 // ================= CUSTOMER SUBPAGES =================
 
-function CustomerHome({ search, setSearch, category, setCategory, workers, categoryCounts, onBook, liked, setLiked, notify }) {
+function CustomerHome({ search, setSearch, category, setCategory, workers, setWorkers, categoryCounts, onBook, onPostJob, onViewProfile, liked, setLiked, notify }) {
   const { user } = useAuth();
   const navigate = useNavigate();
 
@@ -624,58 +1348,19 @@ function CustomerHome({ search, setSearch, category, setCategory, workers, categ
         </div>
       </div>
 
-      <section className="hero-card">
-        <div className="hero-copy">
-          <Tag tone="dark">
-            <Sparkles size={12} /> HOME, MADE EASIER
-          </Tag>
-          <h2>
-            Good help.
-            <br />
-            <em>Right around the corner.</em>
-          </h2>
-          <p>Book trusted local professionals for all those things on your to-do list.</p>
-          <div className="hero-trust">
-            <span>
-              <ShieldCheck size={15} /> Verified professionals
-            </span>
-            <span>
-              <Star size={14} fill="currentColor" /> Verified quality rating
-            </span>
-          </div>
-        </div>
-        <div className="hero-visual">
-          <div className="hero-orbit orbit-one" />
-          <div className="hero-orbit orbit-two" />
-          <div className="hero-home">
-            <House size={74} strokeWidth={1.25} />
-            <div className="home-window" />
-            <div className="home-door" />
-          </div>
-          <div className="floating-note note-top">
-            <span className="note-icon green">
-              <Check size={14} />
-            </span>
-            <div>
-              <strong>Trusted help</strong>
-              <small>Checked professionals</small>
-            </div>
-          </div>
-          <div className="floating-note note-bottom">
-            <div className="tiny-avatars">
-              <Avatar initials="SP" size="xs" />
-              <Avatar initials="EP" color="blue" size="xs" />
-              <Avatar initials="CP" color="green" size="xs" />
-            </div>
-            <div>
-              <strong>People nearby</strong>
-              <small>Ready when you are</small>
-            </div>
-          </div>
-        </div>
-      </section>
+      <MapFirstHero
+        onBook={onBook}
+        onPostJob={onPostJob}
+        onViewProfile={onViewProfile}
+        notify={notify}
+        search={search}
+        onSearchChange={setSearch}
+        category={category}
+        onCategoryChange={setCategory}
+        onWorkersLoaded={setWorkers}
+      />
 
-      <div className="search-bar home-search">
+      <div className="search-bar home-search" style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
         <MapPin size={17} />
         <div className="search-location">
           <small>Service location</small>
@@ -689,8 +1374,22 @@ function CustomerHome({ search, setSearch, category, setCategory, workers, categ
           onKeyDown={(e) => e.key === 'Enter' && navigate('/customer/explore')}
           placeholder="What do you need help with?"
         />
+        <VoiceInputButton
+          mode="text"
+          onResult={(spokenText, matchedService) => {
+            if (spokenText) {
+              setSearch(spokenText);
+              if (matchedService) {
+                setCategory(matchedService);
+              }
+            }
+          }}
+        />
         <Button onClick={() => navigate('/customer/explore')}>
           Find help <ArrowRight size={15} />
+        </Button>
+        <Button variant="secondary" onClick={() => onPostJob && onPostJob(category !== 'All services' ? category : undefined)}>
+          Post a job <Plus size={15} />
         </Button>
       </div>
 
@@ -714,7 +1413,7 @@ function CustomerHome({ search, setSearch, category, setCategory, workers, categ
           onAction={() => navigate('/customer/explore')}
         />
         {workers.length > 0 ? (
-          <WorkerGrid workers={workers.slice(0, 3)} onBook={onBook} liked={liked} setLiked={setLiked} />
+          <WorkerGrid workers={workers.slice(0, 3)} onBook={onBook} onViewProfile={onViewProfile} liked={liked} setLiked={setLiked} />
         ) : (
           <div className="empty-inline" style={{ padding: '32px 16px', textAlign: 'center', background: '#fff', borderRadius: '12px', border: '1px dashed #cbd5e1', color: '#64748b' }}>
             No verified professionals found nearby in this category yet.
@@ -792,7 +1491,7 @@ function CustomerHome({ search, setSearch, category, setCategory, workers, categ
   );
 }
 
-function CustomerExplore({ search, setSearch, category, setCategory, workers, categoryCounts, onBook, liked, setLiked, notify }) {
+function CustomerExplore({ search, setSearch, category, setCategory, workers, categoryCounts, onBook, onPostJob, onViewProfile, liked, setLiked, notify }) {
   return (
     <>
       <PageHeading
@@ -800,7 +1499,7 @@ function CustomerExplore({ search, setSearch, category, setCategory, workers, ca
         title="Explore local services"
         subtitle="The right help for your home, without the hassle."
       />
-      <div className="search-bar wide-search">
+      <div className="search-bar wide-search" style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
         <Search size={18} />
         <input
           value={search}
@@ -810,6 +1509,9 @@ function CustomerExplore({ search, setSearch, category, setCategory, workers, ca
         <Button onClick={() => notify(`Showing ${workers.length} verified professionals.`)}>
           Search
         </Button>
+        <Button variant="secondary" onClick={() => onPostJob && onPostJob(category !== 'All services' ? category : undefined)}>
+          Post a job <Plus size={15} />
+        </Button>
       </div>
       <CategoryGrid category={category} setCategory={setCategory} counts={categoryCounts} />
       <SectionTitle
@@ -817,12 +1519,12 @@ function CustomerExplore({ search, setSearch, category, setCategory, workers, ca
         title={`${workers.length} professionals available`}
         subtitle="Vetted and rated service providers in your neighbourhood."
       />
-      <WorkerGrid workers={workers} onBook={onBook} liked={liked} setLiked={setLiked} />
+      <WorkerGrid workers={workers} onBook={onBook} onViewProfile={onViewProfile} liked={liked} setLiked={setLiked} />
     </>
   );
 }
 
-function CustomerSaved({ workers, liked, setLiked, onBook }) {
+function CustomerSaved({ workers, liked, setLiked, onBook, onViewProfile }) {
   const navigate = useNavigate();
   const savedWorkers = workers.filter((w) => liked.includes(w.id));
 
@@ -834,7 +1536,7 @@ function CustomerSaved({ workers, liked, setLiked, onBook }) {
         subtitle="Keep trusted people close for the next time you need help."
       />
       {savedWorkers.length ? (
-        <WorkerGrid workers={savedWorkers} onBook={onBook} liked={liked} setLiked={setLiked} />
+        <WorkerGrid workers={savedWorkers} onBook={onBook} onViewProfile={onViewProfile} liked={liked} setLiked={setLiked} />
       ) : (
         <EmptyState
           icon={Heart}
@@ -848,9 +1550,10 @@ function CustomerSaved({ workers, liked, setLiked, onBook }) {
   );
 }
 
+
 // ================= WORKER SUBPAGES =================
 
-function WorkerDashboard({ jobs = [], activeJobs = [], dashboardStats, onAccept, onCounter }) {
+function WorkerDashboard({ jobs = [], activeJobs = [], dashboardStats, onAccept, onCounter, onDecline, onHistory }) {
   const { user } = useAuth();
   const navigate = useNavigate();
 
@@ -941,7 +1644,14 @@ function WorkerDashboard({ jobs = [], activeJobs = [], dashboardStats, onAccept,
             </button>
           </div>
           {safeJobs.slice(0, 2).map((job) => (
-            <CompactRequest key={job.id} job={job} onAccept={onAccept} onCounter={onCounter} />
+            <CompactRequest
+              key={job.id}
+              job={job}
+              onAccept={onAccept}
+              onCounter={onCounter}
+              onDecline={onDecline}
+              onHistory={onHistory}
+            />
           ))}
           {safeJobs.length === 0 && (
             <div className="small-empty" style={{ padding: '24px 16px', textAlign: 'center', color: '#64748b' }}>
@@ -1055,7 +1765,7 @@ function WorkerDashboard({ jobs = [], activeJobs = [], dashboardStats, onAccept,
   );
 }
 
-function WorkerJobs({ jobs = [], onAccept, onCounter, notify }) {
+function WorkerJobs({ jobs = [], onAccept, onCounter, onDecline, onHistory, notify }) {
   const navigate = useNavigate();
   const safeJobs = Array.isArray(jobs) ? jobs : [];
   const [showFilterModal, setShowFilterModal] = useState(false);
@@ -1106,7 +1816,14 @@ function WorkerJobs({ jobs = [], onAccept, onCounter, notify }) {
       {filteredJobs.length ? (
         <div className="job-request-list">
           {filteredJobs.map((job) => (
-            <JobRequestCard key={job.id} job={job} onAccept={onAccept} onCounter={onCounter} />
+            <JobRequestCard
+              key={job.id}
+              job={job}
+              onAccept={onAccept}
+              onCounter={onCounter}
+              onDecline={onDecline}
+              onHistory={onHistory}
+            />
           ))}
         </div>
       ) : (
@@ -1237,6 +1954,7 @@ function WorkerActive({
             const isEnRoute = rawStatus === 'on_the_way';
             const isArrived = rawStatus === 'arrived';
             const isInProgress = rawStatus === 'in_progress';
+            const isPaymentPending = rawStatus === 'payment_pending';
 
             let statusTone = 'warning';
             let statusLabel = 'Accepted · Ready to depart';
@@ -1250,6 +1968,9 @@ function WorkerActive({
             } else if (isInProgress) {
               statusTone = 'success';
               statusLabel = 'Service Work in Progress';
+            } else if (isPaymentPending) {
+              statusTone = 'blue';
+              statusLabel = 'Work Completed · Awaiting Customer Confirmation';
             }
 
             return (
@@ -1264,7 +1985,7 @@ function WorkerActive({
                         {statusLabel}
                       </Tag>
                       <span>
-                        {job.id} · {job.time || 'Active now'}
+                        {job.bookingNumber || job.id} · {job.time || 'Active now'}
                       </span>
                     </div>
                     <h3>{job.title}</h3>
@@ -1290,7 +2011,7 @@ function WorkerActive({
                   <div className="job-card-price">
                     <small>Agreed price</small>
                     <strong>{money(job.price)}</strong>
-                    <span>Direct payout</span>
+                    <span style={{ fontSize: '11px', color: '#64748B' }}>Simulated payment</span>
                   </div>
                 </div>
 
@@ -1315,7 +2036,7 @@ function WorkerActive({
 
                   {isArrived && (
                     <Button onClick={() => onStartWork(job)}>
-                      <Wrench size={15} /> Start Service Work
+                      <KeyRound size={15} /> Enter Start Code & Begin Work
                     </Button>
                   )}
 
@@ -1323,6 +2044,24 @@ function WorkerActive({
                     <Button onClick={() => onCompleteJob(job)}>
                       <Check size={15} /> Mark Job Completed
                     </Button>
+                  )}
+
+                  {isPaymentPending && (
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      background: '#EFF6FF',
+                      border: '1px solid #BFDBFE',
+                      borderRadius: '8px',
+                      padding: '10px 14px',
+                      fontSize: '13px',
+                      color: '#1E40AF',
+                      width: '100%'
+                    }}>
+                      <Clock3 size={16} color="#2563EB" />
+                      <span>Work marked complete. Awaiting customer confirmation to release simulated payment.</span>
+                    </div>
                   )}
                 </div>
               </article>
@@ -1388,7 +2127,7 @@ function CategoryGrid({ category, setCategory, counts = {} }) {
   );
 }
 
-function WorkerGrid({ workers, onBook, liked, setLiked }) {
+function WorkerGrid({ workers, onBook, onViewProfile, liked, setLiked }) {
   if (!workers || !workers.length) {
     return (
       <div className="empty-inline" style={{ padding: '32px 16px', textAlign: 'center', background: '#fff', borderRadius: '12px', border: '1px dashed #cbd5e1', color: '#64748b' }}>
@@ -1403,7 +2142,13 @@ function WorkerGrid({ workers, onBook, liked, setLiked }) {
         return (
           <article className="worker-card" key={w.id}>
             <div className="worker-card-top">
-              <Avatar initials={w.initials || 'WP'} color={w.color || 'sand'} size="lg" />
+              <div
+                style={{ cursor: onViewProfile ? 'pointer' : 'default' }}
+                onClick={() => onViewProfile?.(w)}
+                title={`View profile of ${w.name}`}
+              >
+                <Avatar initials={w.initials || 'WP'} color={w.color || 'sand'} size="lg" />
+              </div>
               <button
                 className={`heart-btn ${liked.includes(w.id) ? 'liked' : ''}`}
                 onClick={() =>
@@ -1417,7 +2162,13 @@ function WorkerGrid({ workers, onBook, liked, setLiked }) {
               </button>
             </div>
             <div className="worker-name-row">
-              <h3>{w.name}</h3>
+              <h3
+                style={{ cursor: onViewProfile ? 'pointer' : 'default' }}
+                onClick={() => onViewProfile?.(w)}
+                title={`View profile of ${w.name}`}
+              >
+                {w.name}
+              </h3>
               {w.verified && <BadgeCheck size={16} className="verified-icon" />}
             </div>
             <div className="worker-job">{w.job}</div>
@@ -1445,9 +2196,21 @@ function WorkerGrid({ workers, onBook, liked, setLiked }) {
                   <small> / visit</small>
                 </strong>
               </div>
-              <Button size="small" onClick={() => onBook(w, w.job?.split(' ')[0] || 'General')}>
-                Book now <ArrowRight size={14} />
-              </Button>
+              <div className="worker-card-actions">
+                {onViewProfile && (
+                  <button
+                    type="button"
+                    className="worker-card-profile-btn"
+                    onClick={() => onViewProfile(w)}
+                    aria-label={`View profile of ${w.name}`}
+                  >
+                    View profile
+                  </button>
+                )}
+                <Button size="small" onClick={() => onBook(w, w.skill || 'General')}>
+                  Book now <ArrowRight size={14} />
+                </Button>
+              </div>
             </div>
           </article>
         );
@@ -1456,18 +2219,41 @@ function WorkerGrid({ workers, onBook, liked, setLiked }) {
   );
 }
 
-function BookingsPage({ bookings = [], onRefresh }) {
+
+function BookingsPage({ bookings = [], onRefresh, notify, onViewOffers }) {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [reviewJob, setReviewJob] = useState(null);
   const [trackingBookingId, setTrackingBookingId] = useState(null);
+  const [counterBooking, setCounterBooking] = useState(null);
+  const [historyBookingId, setHistoryBookingId] = useState(null);
   const [rating, setRating] = useState(5);
   const [comment, setComment] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const totalBookings = bookings.length;
-  const inProgress = bookings.filter((b) => b.canTrack || b.status === 'In progress' || b.status === 'accepted' || b.rawStatus === 'on_the_way').length;
+  const inProgress = bookings.filter((b) => b.canTrack || b.status === 'In progress' || b.status === 'accepted' || b.rawStatus === 'on_the_way' || b.rawStatus === 'arrived' || b.rawStatus === 'in_progress').length;
   const completed = bookings.filter((b) => b.status === 'completed' || b.rawStatus === 'completed').length;
+
+  const handleAcceptCounter = async (booking) => {
+    if (!booking?.counterOffer?.id) return;
+    try {
+      await dbService.customerAcceptOffer(user?.id, booking.id, booking.counterOffer.id);
+      onRefresh?.();
+    } catch (err) {
+      alert(err.message || 'Failed to accept counter-offer');
+    }
+  };
+
+  const handleDeclineCounter = async (booking) => {
+    if (!booking?.counterOffer?.id) return;
+    try {
+      await dbService.customerDeclineOffer(user?.id, booking.id, booking.counterOffer.id);
+      onRefresh?.();
+    } catch (err) {
+      alert(err.message || 'Failed to decline counter-offer');
+    }
+  };
 
   const handleReviewSubmit = async (e) => {
     e.preventDefault();
@@ -1483,6 +2269,7 @@ function BookingsPage({ bookings = [], onRefresh }) {
       });
       setReviewJob(null);
       setComment('');
+      notify?.('Review submitted! Thank you for rating the service.');
       onRefresh?.();
     } catch (err) {
       alert(err.message || 'Failed to submit review');
@@ -1510,49 +2297,149 @@ function BookingsPage({ bookings = [], onRefresh }) {
             <span>Service</span>
             <span>Professional</span>
             <span>Schedule</span>
-            <span>Amount</span>
+            <span>Amount (Simulated payment)</span>
             <span>Status & Tracking</span>
           </div>
           {bookings.map((b) => (
-            <div className="booking-row" key={b.id}>
-              <div className="booking-service">
-                <span className="table-service-icon">
-                  <Wrench size={17} />
+            <div className="booking-row" key={b.id} style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '16px 20px', borderBottom: '1px solid #F1F5F9' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', alignItems: 'center', gap: '12px', width: '100%' }}>
+                <div className="booking-service">
+                  <span className="table-service-icon">
+                    <Wrench size={17} />
+                  </span>
+                  <span>
+                    <strong>{b.title}</strong>
+                    <small>{b.bookingNumber || b.id}</small>
+                  </span>
+                </div>
+                <span className="table-worker">{b.worker}</span>
+                <span className="table-schedule">
+                  {b.date}
+                  <small>{b.time}</small>
                 </span>
-                <span>
-                  <strong>{b.title}</strong>
-                  <small>{b.id}</small>
-                </span>
+                <div>
+                  <strong>{money(b.price)}</strong>
+                  <small style={{ display: 'block', fontSize: '10px', color: '#64748B' }}>Simulated payment</small>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  <Tag tone={b.canTrack ? 'blue' : b.status === 'completed' || b.rawStatus === 'completed' ? 'success' : b.counterOffer ? 'warning' : 'neutral'} dot>
+                    {b.status}
+                  </Tag>
+
+                  {/* Start code display for customer */}
+                  {b.startCode && ['accepted', 'on_the_way', 'arrived'].includes(b.rawStatus || b.status) && (
+                    <div style={{
+                      background: '#FFF7ED',
+                      border: '1.5px solid #FDBA74',
+                      borderRadius: '8px',
+                      padding: '4px 10px',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                    }}>
+                      <KeyRound size={14} color="#EA580C" />
+                      <span style={{ fontSize: '11px', color: '#9A3412', fontWeight: 600 }}>
+                        Start Code: <strong style={{ letterSpacing: '2px', fontSize: '13px', color: '#EA580C' }}>{b.startCode}</strong>
+                      </span>
+                    </div>
+                  )}
+
+                  {/* View Offers for broadcast jobs */}
+                  {['open', 'bidding', 'negotiating', 'broadcasting'].includes(b.rawStatus || b.status) && (
+                    <button
+                      className="btn primary small"
+                      onClick={() => onViewOffers?.(b.id)}
+                      style={{ fontSize: '11px', padding: '4px 10px', background: '#FF9500', borderColor: '#FF9500', color: '#FFFFFF', fontWeight: 600 }}
+                      title="View technician offers"
+                    >
+                      View Offers
+                    </button>
+                  )}
+
+                  {/* Customer Confirm Job Completed */}
+                  {(b.rawStatus === 'payment_pending' || b.status === 'payment_pending') && (
+                    <button
+                      className="btn primary small"
+                      onClick={async () => {
+                        try {
+                          await dbService.confirmJobCompletion(b.id);
+                          notify?.('Job confirmed! Simulated payment released to technician.');
+                          setReviewJob(b);
+                          onRefresh?.();
+                        } catch (err) {
+                          alert(err.message || 'Failed to confirm job completion');
+                        }
+                      }}
+                      style={{ fontSize: '11px', padding: '5px 12px', background: '#10B981', borderColor: '#10B981', color: '#FFFFFF', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '5px' }}
+                    >
+                      <CircleCheckBig size={13} /> Confirm job completed
+                    </button>
+                  )}
+
+                  {b.counterOffer && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <button
+                        className="btn primary small"
+                        onClick={() => handleAcceptCounter(b)}
+                        style={{ fontSize: '11px', padding: '4px 10px', background: '#16a34a', borderColor: '#16a34a' }}
+                        title="Accept proposed counter-offer"
+                      >
+                        Accept {money(b.counterOffer.price)}
+                      </button>
+                      <button
+                        className="btn secondary small"
+                        onClick={() => setCounterBooking(b)}
+                        style={{ fontSize: '11px', padding: '4px 8px', color: '#2563eb', borderColor: '#bfdbfe' }}
+                        title="Submit a counter-offer"
+                      >
+                        Counter
+                      </button>
+                      <button
+                        className="btn secondary small"
+                        onClick={() => handleDeclineCounter(b)}
+                        style={{ fontSize: '11px', padding: '4px 8px', color: '#dc2626' }}
+                        title="Decline proposed counter-offer"
+                      >
+                        Decline
+                      </button>
+                    </div>
+                  )}
+
+                  {(b.counterOffer || b.pendingCustomerOffer || b.agreedPrice != null || b.rawStatus === 'negotiating' || b.rawStatus === 'bidding') && (
+                    <button
+                      className="btn secondary small"
+                      onClick={() => setHistoryBookingId(b.id)}
+                      style={{ fontSize: '11px', padding: '4px 8px', color: '#475569', background: '#f1f5f9' }}
+                      title="View offer history timeline"
+                    >
+                      History
+                    </button>
+                  )}
+                  {b.canTrack && (
+                    <button
+                      className="btn primary small"
+                      onClick={() => setTrackingBookingId(b.id)}
+                      style={{ fontSize: '11px', padding: '4px 10px', display: 'flex', alignItems: 'center', gap: '5px' }}
+                      title="Track professional's live GPS route"
+                    >
+                      <Navigation size={12} /> Track Live
+                    </button>
+                  )}
+                  {(b.status === 'completed' || b.rawStatus === 'completed') && (
+                    <button
+                      className="btn secondary small"
+                      onClick={() => setReviewJob(b)}
+                      style={{ fontSize: '11px', padding: '4px 8px' }}
+                    >
+                      Leave review
+                    </button>
+                  )}
+                </div>
               </div>
-              <span className="table-worker">{b.worker}</span>
-              <span className="table-schedule">
-                {b.date}
-                <small>{b.time}</small>
-              </span>
-              <strong>{money(b.price)}</strong>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                <Tag tone={b.canTrack ? 'blue' : b.status === 'completed' ? 'success' : 'warning'} dot>
-                  {b.status}
-                </Tag>
-                {b.canTrack && (
-                  <button
-                    className="btn primary small"
-                    onClick={() => setTrackingBookingId(b.id)}
-                    style={{ fontSize: '11px', padding: '4px 10px', display: 'flex', alignItems: 'center', gap: '5px' }}
-                    title="Track professional's live GPS route"
-                  >
-                    <Navigation size={12} /> Track Live
-                  </button>
-                )}
-                {b.status === 'completed' && (
-                  <button
-                    className="btn secondary small"
-                    onClick={() => setReviewJob(b)}
-                    style={{ fontSize: '11px', padding: '4px 8px' }}
-                  >
-                    Leave review
-                  </button>
-                )}
+
+              {/* Stepper tracker for active bookings */}
+              <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px dashed #E2E8F0' }}>
+                <CustomerJobStepper status={b.rawStatus || b.status} />
               </div>
             </div>
           ))}
@@ -1571,6 +2458,21 @@ function BookingsPage({ bookings = [], onRefresh }) {
           Find another service <ArrowRight size={15} />
         </Button>
       </div>
+
+      {counterBooking && (
+        <CustomerCounterModal
+          booking={counterBooking}
+          onClose={() => setCounterBooking(null)}
+          onRefresh={onRefresh}
+        />
+      )}
+
+      {historyBookingId && (
+        <NegotiationHistoryModal
+          bookingId={historyBookingId}
+          onClose={() => setHistoryBookingId(null)}
+        />
+      )}
 
       {reviewJob && (
         <Modal
@@ -2123,7 +3025,7 @@ function StatCard({ icon: Icon, label, value, detail, trend }) {
   );
 }
 
-function CompactRequest({ job, onAccept, onCounter }) {
+function CompactRequest({ job, onAccept, onCounter, onDecline, onHistory }) {
   return (
     <div className="compact-request">
       <div className="compact-job-icon">
@@ -2137,20 +3039,45 @@ function CompactRequest({ job, onAccept, onCounter }) {
         <small>
           {job.customer} · {job.id}
         </small>
+        {job.isCustomerOffer && (
+          <div style={{ marginTop: '4px' }}>
+            <span style={{ fontSize: '11px', background: '#ecfdf5', color: '#047857', padding: '2px 6px', borderRadius: '4px', fontWeight: 600 }}>
+              🏷️ Customer Offer: ₹{job.customerOfferPrice} (Listed: ₹{job.originalPrice || 350})
+            </span>
+          </div>
+        )}
       </div>
       <div className="compact-job-price">
-        <small>Customer budget</small>
+        <small>{job.isCustomerOffer ? 'Offered price' : 'Customer budget'}</small>
         <strong>{money(job.price)}</strong>
-        <div>
+        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', justifyContent: 'flex-end', marginTop: '4px' }}>
+          {onHistory && (
+            <button
+              onClick={() => onHistory(job)}
+              style={{ fontSize: '10px', padding: '2px 6px', background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1' }}
+              title="View offer history"
+            >
+              History
+            </button>
+          )}
+          {job.isCustomerOffer && onDecline && (
+            <button
+              onClick={() => onDecline(job)}
+              style={{ fontSize: '10px', padding: '2px 6px', color: '#dc2626', borderColor: '#fca5a5' }}
+              title="Decline customer offer"
+            >
+              Decline
+            </button>
+          )}
           <button onClick={() => onCounter(job)}>Counter</button>
-          <button onClick={() => onAccept(job)}>Accept</button>
+          <button onClick={() => onAccept(job)}>Accept {money(job.price)}</button>
         </div>
       </div>
     </div>
   );
 }
 
-function JobRequestCard({ job, onAccept, onCounter, active = false }) {
+function JobRequestCard({ job, onAccept, onCounter, onDecline, onHistory, active = false }) {
   return (
     <article className="job-card">
       <div className="job-card-main">
@@ -2159,8 +3086,8 @@ function JobRequestCard({ job, onAccept, onCounter, active = false }) {
         </div>
         <div className="job-card-details">
           <div className="job-card-eyebrow">
-            <Tag tone={active ? 'success' : 'warning'} dot>
-              {active ? 'Accepted & Active' : 'New request'}
+            <Tag tone={active ? 'success' : job.isCustomerOffer ? 'blue' : 'warning'} dot>
+              {active ? 'Accepted & Active' : (job.isCustomerOffer ? 'Customer Price Offer' : 'New request')}
             </Tag>
             <span>
               {job.id} · {job.time || 'Just now'}
@@ -2174,6 +3101,17 @@ function JobRequestCard({ job, onAccept, onCounter, active = false }) {
             <MapPin size={13} />
             <span>{job.location}</span>
           </div>
+          {job.isCustomerOffer && (
+            <div style={{ marginTop: '8px', padding: '8px 12px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+              <div>
+                <strong style={{ fontSize: '13px', color: '#166534' }}>Customer proposed: ₹{job.customerOfferPrice}</strong>
+                <span style={{ fontSize: '12px', color: '#15803d', marginLeft: '8px' }}>
+                  (Your listed service price: ₹{job.originalPrice || 350})
+                </span>
+              </div>
+              <span style={{ fontSize: '11px', color: '#166534', fontWeight: 600 }}>Round 1 of 2</span>
+            </div>
+          )}
           <div className="job-extra">
             <span>
               <Clock3 size={14} /> Flexible timing
@@ -2184,18 +3122,36 @@ function JobRequestCard({ job, onAccept, onCounter, active = false }) {
           </div>
         </div>
         <div className="job-card-price">
-          <small>Customer budget</small>
+          <small>{job.isCustomerOffer ? 'Customer proposed' : 'Customer budget'}</small>
           <strong>{money(job.price)}</strong>
-          <span>Fixed price agreement</span>
+          <span>{job.isCustomerOffer ? 'Under negotiation' : 'Fixed price agreement'}</span>
         </div>
       </div>
       <div className="job-card-actions">
+        {onHistory && (
+          <button
+            className="job-secondary-action"
+            onClick={() => onHistory(job)}
+            style={{ marginRight: 'auto' }}
+          >
+            Negotiation history
+          </button>
+        )}
+        {job.isCustomerOffer && onDecline && !active && (
+          <button
+            className="job-secondary-action"
+            onClick={() => onDecline(job)}
+            style={{ color: '#dc2626' }}
+          >
+            Decline offer
+          </button>
+        )}
         <button
           className="job-secondary-action"
           onClick={() => onCounter(job)}
           disabled={active}
         >
-          Make a counter-offer
+          Make counter-offer
         </button>
         <Button onClick={() => onAccept(job)} disabled={active}>
           {active ? (
@@ -2204,7 +3160,7 @@ function JobRequestCard({ job, onAccept, onCounter, active = false }) {
             </>
           ) : (
             <>
-              Accept job <ArrowRight size={15} />
+              Accept {money(job.price)} <ArrowRight size={15} />
             </>
           )}
         </Button>
@@ -2391,6 +3347,209 @@ function EmptyState({ icon: Icon, title, text, action, onAction }) {
         </Button>
       )}
     </div>
+  );
+}
+
+function NegotiationHistoryModal({ bookingId, onClose }) {
+  const [history, setHistory] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    dbService.getNegotiationHistory(bookingId)
+      .then((res) => {
+        if (mounted) {
+          setHistory(res || []);
+          setLoading(false);
+        }
+      })
+      .catch((e) => {
+        if (mounted) setLoading(false);
+      });
+    return () => { mounted = false; };
+  }, [bookingId]);
+
+  return (
+    <Modal
+      title="Negotiation History"
+      subtitle={`Chronological record of price proposals for booking ${bookingId}`}
+      onClose={onClose}
+    >
+      {loading ? (
+        <div style={{ padding: '30px', textAlign: 'center', color: '#64748b' }}>Loading history...</div>
+      ) : history.length === 0 ? (
+        <div style={{ padding: '24px', textAlign: 'center', color: '#64748b' }}>No negotiation rounds recorded for this booking.</div>
+      ) : (
+        <div className="negotiation-history-timeline" style={{ padding: '6px 0' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '350px', overflowY: 'auto' }}>
+            {history.map((h, idx) => {
+              const isCust = h.senderRole === 'CUSTOMER';
+              const statusColor = h.status === 'accepted' ? '#16a34a' : h.status === 'rejected' ? '#dc2626' : h.status === 'expired' ? '#64748b' : h.status === 'countered' ? '#d97706' : '#2563eb';
+              const statusBg = h.status === 'accepted' ? '#f0fdf4' : h.status === 'rejected' ? '#fef2f2' : h.status === 'expired' ? '#f8fafc' : h.status === 'countered' ? '#fffbeb' : '#eff6ff';
+
+              return (
+                <div
+                  key={h.id || idx}
+                  style={{
+                    display: 'flex',
+                    gap: '12px',
+                    padding: '12px 14px',
+                    background: statusBg,
+                    border: `1px solid ${statusColor}33`,
+                    borderRadius: '12px',
+                    position: 'relative'
+                  }}
+                >
+                  <div style={{
+                    width: '32px',
+                    height: '32px',
+                    borderRadius: '50%',
+                    background: isCust ? '#e0f2fe' : '#fef3c7',
+                    color: isCust ? '#0369a1' : '#b45309',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontWeight: 700,
+                    fontSize: '12px',
+                    flexShrink: 0
+                  }}>
+                    R{h.roundNumber}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <strong style={{ fontSize: '14px', color: '#0f172a' }}>
+                        {isCust ? 'Customer' : 'Service Professional'} ({h.senderName})
+                      </strong>
+                      <span style={{ fontSize: '16px', fontWeight: 700, color: '#0f172a' }}>
+                        ₹{h.price}
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
+                      <span style={{ fontSize: '12px', color: '#64748b' }}>
+                        {h.createdAt ? new Date(h.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Just now'} · {isCust ? 'Offer' : 'Counter'}
+                      </span>
+                      <span style={{ fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '4px', textTransform: 'uppercase', color: statusColor, background: '#fff', border: `1px solid ${statusColor}` }}>
+                        {h.status}
+                      </span>
+                    </div>
+                    {h.reason && (
+                      <p style={{ margin: '6px 0 0 0', fontSize: '12px', color: '#475569', fontStyle: 'italic' }}>
+                        “{h.reason}”
+                      </p>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div style={{ marginTop: '16px', padding: '10px 12px', background: '#f8fafc', borderRadius: '8px', fontSize: '12px', color: '#64748b', display: 'flex', justifyContent: 'space-between' }}>
+            <span>Limit: Max 2 rounds per party</span>
+            <span>Validity: 15-min window</span>
+          </div>
+
+          <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'flex-end' }}>
+            <Button variant="secondary" onClick={onClose}>Close</Button>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+function CustomerCounterModal({ booking, onClose, onRefresh }) {
+  const { user } = useAuth();
+  const currentPrice = booking?.counterOffer?.price || booking?.price || 350;
+  const [proposedPrice, setProposedPrice] = useState(Math.max(50, currentPrice - 25));
+  const [reason, setReason] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!proposedPrice || proposedPrice < 50 || proposedPrice > 50000) {
+      alert('Please enter a valid price between ₹50 and ₹50,000.');
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      await dbService.customerCounterOffer(user?.id || 'guest-customer', booking.id, proposedPrice, reason);
+      onRefresh?.();
+      onClose();
+    } catch (err) {
+      alert(err.message || 'Failed to submit counter-offer.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal
+      title="Counter Professional’s Offer"
+      subtitle={`Propose another rate for ${booking.title}.`}
+      onClose={onClose}
+    >
+      <form onSubmit={handleSubmit} style={{ padding: '8px 0' }}>
+        <div style={{ padding: '12px', background: '#f8fafc', borderRadius: '10px', marginBottom: '16px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+            <span style={{ fontSize: '13px', color: '#64748b' }}>Worker's counter-offer:</span>
+            <strong style={{ fontSize: '14px', color: '#0f172a' }}>₹{currentPrice}</strong>
+          </div>
+          <div style={{ fontSize: '12px', color: '#64748b' }}>
+            Round 2 of 2 (Final customer negotiation round)
+          </div>
+        </div>
+
+        <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>
+          Your proposed counter price (₹)
+        </label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+          <button
+            type="button"
+            className="btn secondary small"
+            onClick={() => setProposedPrice((v) => Math.max(50, v - 10))}
+          >
+            -₹10
+          </button>
+          <input
+            type="number"
+            min="50"
+            max="50000"
+            step="5"
+            value={proposedPrice}
+            onChange={(e) => setProposedPrice(Number(e.target.value))}
+            style={{ flex: 1, padding: '8px 12px', fontSize: '18px', fontWeight: 700, textAlign: 'center', borderRadius: '8px', border: '2px solid #3b82f6' }}
+            required
+          />
+          <button
+            type="button"
+            className="btn secondary small"
+            onClick={() => setProposedPrice((v) => v + 10)}
+          >
+            +₹10
+          </button>
+        </div>
+
+        <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>
+          Note for technician (optional)
+        </label>
+        <textarea
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="e.g. Can meet in the middle at ₹315?"
+          rows={2}
+          style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '8px', border: '1px solid #cbd5e1', marginBottom: '16px' }}
+        />
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+          <Button variant="secondary" type="button" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" disabled={isSubmitting}>
+            {isSubmitting ? 'Sending...' : `Send Counter ₹${proposedPrice}`}
+          </Button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 

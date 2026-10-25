@@ -1,13 +1,12 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
-import { updateCustomerProfileSchema } from './customer.schemas';
-import { customerService } from './customer.service';
-import { BadRequestError, UnauthorizedError } from '../../common/errors/app-error';
+import { updateCustomerProfileSchema } from './customer.schemas.js';
+import { customerService } from './customer.service.js';
+import { BadRequestError, UnauthorizedError } from '../../common/errors/app-error.js';
 
 export class CustomerController {
   async getMe(request: FastifyRequest, reply: FastifyReply) {
     if (!request.user) throw new UnauthorizedError();
     const profile = await customerService.getProfile(request.user.id);
-
     return reply.status(200).send({
       success: true,
       data: profile,
@@ -25,6 +24,35 @@ export class CustomerController {
     return reply.status(200).send({
       success: true,
       data: updated,
+    });
+  }
+
+  async getSavedWorkers(request: FastifyRequest, reply: FastifyReply) {
+    if (!request.user) throw new UnauthorizedError();
+    const list = await customerService.getSavedWorkers(request.user.id);
+    return reply.status(200).send({
+      success: true,
+      data: list,
+    });
+  }
+
+  async saveWorker(request: FastifyRequest, reply: FastifyReply) {
+    if (!request.user) throw new UnauthorizedError();
+    const { workerId } = request.params as { workerId: string };
+    const result = await customerService.saveWorker(request.user.id, workerId);
+    return reply.status(200).send({
+      success: true,
+      data: result,
+    });
+  }
+
+  async removeSavedWorker(request: FastifyRequest, reply: FastifyReply) {
+    if (!request.user) throw new UnauthorizedError();
+    const { workerId } = request.params as { workerId: string };
+    const result = await customerService.removeSavedWorker(request.user.id, workerId);
+    return reply.status(200).send({
+      success: true,
+      data: result,
     });
   }
 }

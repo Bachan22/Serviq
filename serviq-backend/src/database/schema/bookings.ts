@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, text, numeric, jsonb, doublePrecision, timestamp, boolean } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, text, numeric, jsonb, doublePrecision, timestamp, boolean, integer } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { customerProfiles } from './customer-profiles';
 import { workerProfiles } from './worker-profiles';
@@ -37,9 +37,13 @@ export const bookings = pgTable('bookings', {
   workerCancellationShare: numeric('worker_cancellation_share', { precision: 10, scale: 2 }).default('0.00'),
   platformCancellationFee: numeric('platform_cancellation_fee', { precision: 10, scale: 2 }).default('0.00'),
   dispatchedAt: timestamp('dispatched_at', { withTimezone: true }),
+  onTheWayAt: timestamp('on_the_way_at', { withTimezone: true }),
   arrivedAt: timestamp('arrived_at', { withTimezone: true }),
   startedAt: timestamp('started_at', { withTimezone: true }),
   completedAt: timestamp('completed_at', { withTimezone: true }),
+  customerConfirmedAt: timestamp('customer_confirmed_at', { withTimezone: true }),
+  startCodeAttempts: integer('start_code_attempts').notNull().default(0),
+  startCodeLockedUntil: timestamp('start_code_locked_until', { withTimezone: true }),
   cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().default(sql`CURRENT_TIMESTAMP`),

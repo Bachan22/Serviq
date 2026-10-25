@@ -69,4 +69,32 @@ export const customerApi = {
     });
     return res.data;
   },
+
+  /**
+   * Get customer's saved workers
+   */
+  async getSavedWorkers() {
+    const res = await apiClient('/customers/saved-workers');
+    return res.data;
+  },
+
+  /**
+   * Save a worker to favorites
+   */
+  async saveWorker(workerId) {
+    const res = await apiClient(`/customers/saved-workers/${workerId}`, {
+      method: 'POST',
+    });
+    return res.data;
+  },
+
+  /**
+   * Remove a worker from favorites
+   */
+  async removeSavedWorker(workerId) {
+    const res = await apiClient(`/customers/saved-workers/${workerId}`, {
+      method: 'DELETE',
+    });
+    return res.data;
+  },
 };

@@ -5,17 +5,22 @@ dotenv.config();
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-  PORT: z.coerce.number().default(4000),
+  PORT: z.coerce.number().default(5000),
   HOST: z.string().default('0.0.0.0'),
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
+  ALLOWED_ORIGINS: z.string().optional(),
 
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
   REDIS_URL: z.string().default('redis://localhost:6379'),
 
-  JWT_ACCESS_SECRET: z.string().min(32, 'JWT_ACCESS_SECRET must be at least 32 characters'),
+  JWT_SECRET: z.string().optional(),
+  JWT_ACCESS_SECRET: z.string().optional(),
   JWT_ACCESS_EXPIRES_IN: z.string().default('15m'),
-  JWT_REFRESH_SECRET: z.string().min(32, 'JWT_REFRESH_SECRET must be at least 32 characters'),
+  JWT_REFRESH_SECRET: z.string().optional(),
   JWT_REFRESH_EXPIRES_IN: z.string().default('30d'),
+
+  START_CODE_SECRET: z.string().min(8, 'START_CODE_SECRET is required and must be at least 8 characters').default('serviq_start_code_hmac_secret_key_default'),
+  WISPR_API_KEY: z.string().optional(),
 
   SMS_DEV_MOCK_MODE: z.preprocess((val) => val === 'true' || val === true, z.boolean()).default(true),
   SMS_GATEWAY_API_KEY: z.string().optional(),
@@ -39,4 +44,27 @@ if (!parsed.success) {
   throw new Error('Environment configuration validation failed.');
 }
 
-export const env = parsed.data;
+const rawData = parsed.data;
+
+// Resolve JWT secret: accept either JWT_SECRET or JWT_ACCESS_SECRET
+const jwtSecret = rawData.JWT_SECRET || rawData.JWT_ACCESS_SECRET;
+if (!jwtSecret || jwtSecret.length < 16) {
+  throw new Error('JWT_SECRET (or JWT_ACCESS_SECRET) is required and must be at least 16 characters.');
+}
+
+export const env = {
+  ...rawData,
+  JWT_ACCESS_SECRET: jwtSecret,
+  JWT_REFRESH_SECRET: rawData.JWT_REFRESH_SECRET || jwtSecret,
+  getAllowedOrigins(): string[] {
+    const list: string[] = [];
+    if (rawData.ALLOWED_ORIGINS) {
+      list.push(...rawData.ALLOWED_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean));
+    }
+    if (rawData.CORS_ORIGIN) {
+      list.push(...rawData.CORS_ORIGIN.split(',').map((s) => s.trim()).filter(Boolean));
+    }
+    list.push('http://localhost:5173', 'http://127.0.0.1:5173');
+    return [...new Set(list)];
+  },
+};

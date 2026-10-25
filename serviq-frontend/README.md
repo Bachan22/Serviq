@@ -178,3 +178,41 @@ This tests all 10 requirements:
 8. Online/offline toggle behavior (offline worker receives no requests).
 9. Customer home real counts and honest empty state.
 10. Complete codebase audit confirming zero mock arrays or persona strings in UI files.
+
+---
+
+## 🗺️ Google Maps Provider Setup & Hardening
+
+Serviq features a Map-First Hero with a modular provider abstraction:
+- **Default / Fallback**: Uses Leaflet and OpenStreetMap tiles automatically whenever `VITE_GOOGLE_MAPS_API_KEY` is omitted or unavailable.
+- **Production / Google Maps**: Uses Google Maps JavaScript API with official loader and `AdvancedMarkerElement`.
+
+### 1. Creating and Securing Your Google Maps API Key
+1. **Create Key**:
+   - Go to the [Google Cloud Console](https://console.cloud.google.com/) > **APIs & Services** > **Credentials**.
+   - Click **Create Credentials** > **API key**.
+2. **API Restrictions**:
+   - Under *API restrictions*, choose **Restrict key**.
+   - Enable **Maps JavaScript API** (and optionally **Geocoding API**).
+   - Do NOT enable unrestricted access.
+3. **Application / HTTP Referrer Restrictions**:
+   - Under *Application restrictions*, select **Websites (HTTP referrers)**.
+   - Add your authorized website domains:
+     - `http://localhost:5173/*`
+     - `http://localhost:*/*`
+     - `https://your-serviq-deployment.vercel.app/*`
+     - `https://*.vercel.app/*`
+4. **Quotas and Billing Alerts**:
+   - Navigate to **Billing** > **Budgets & alerts** and set a monthly alert (e.g., $10 or $25).
+   - Under **APIs & Services** > **Maps JavaScript API** > **Quotas**, set a daily cap to prevent unexpected surges.
+5. **Create a Map ID for Vector Styling & Advanced Markers**:
+   - Go to **Map Management** > **Create Map ID**.
+   - Map Type: **JavaScript**, Raster/Vector: **Vector**.
+   - Copy your Map ID.
+
+### 2. Configuring Environment Variables in Vercel
+In your Vercel Dashboard (*Project Settings > Environment Variables*):
+- `VITE_GOOGLE_MAPS_API_KEY`: Your restricted Google Maps API Key.
+- `VITE_GOOGLE_MAP_ID`: Your created Map ID.
+- Re-deploy to activate. When these keys are absent, the platform automatically and gracefully runs on the Leaflet fallback with identical custom avatars, pills, user pulse, and radius circles.
+

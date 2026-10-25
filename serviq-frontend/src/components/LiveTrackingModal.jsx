@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { dbService } from '../api/database.js';
 import { getDrivingRoute } from '../utils/routing.js';
 import TrackingMap from './TrackingMap.jsx';
+import CustomerJobStepper from './CustomerJobStepper.jsx';
 import {
   X,
   Phone,
@@ -18,6 +19,7 @@ import {
   Home,
   ArrowRight,
   ShieldAlert,
+  KeyRound,
 } from 'lucide-react';
 
 export default function LiveTrackingModal({ bookingId, userId, onClose, onRefreshBookings }) {
@@ -127,7 +129,7 @@ export default function LiveTrackingModal({ bookingId, userId, onClose, onRefres
       bottom: 0,
       backgroundColor: 'rgba(15, 17, 21, 0.7)',
       backdropFilter: 'blur(6px)',
-      zIndex: 2000,
+      zIndex: 10050,
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
@@ -246,6 +248,84 @@ export default function LiveTrackingModal({ bookingId, userId, onClose, onRefres
             </div>
           ) : (
             <>
+              {/* Job Stepper Tracker */}
+              <div style={{ marginBottom: '16px' }}>
+                <CustomerJobStepper status={trackingData?.rawStatus || status} />
+              </div>
+
+              {/* Start Code Display for Customer */}
+              {trackingData?.startCode && (
+                <div style={{
+                  background: '#FFF7ED',
+                  border: '1.5px solid #FDBA74',
+                  borderRadius: '12px',
+                  padding: '12px 16px',
+                  marginBottom: '16px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '12px',
+                  flexWrap: 'wrap',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <KeyRound size={22} color="#EA580C" />
+                    <div>
+                      <strong style={{ fontSize: '13px', color: '#9A3412', display: 'block' }}>Customer Start Code</strong>
+                      <span style={{ fontSize: '11px', color: '#7C2D12' }}>Share this 4-digit code with your technician to authorize starting service</span>
+                    </div>
+                  </div>
+                  <div style={{
+                    fontSize: '22px',
+                    fontWeight: '800',
+                    letterSpacing: '4px',
+                    color: '#EA580C',
+                    background: '#FFFFFF',
+                    border: '1px solid #FED7AA',
+                    padding: '4px 14px',
+                    borderRadius: '8px',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
+                  }}>
+                    {trackingData.startCode}
+                  </div>
+                </div>
+              )}
+
+              {/* Completion Confirmation for Customer */}
+              {status === 'payment_pending' && (
+                <div style={{
+                  background: '#ECFDF5',
+                  border: '1.5px solid #6EE7B7',
+                  borderRadius: '12px',
+                  padding: '14px 16px',
+                  marginBottom: '16px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '12px',
+                  flexWrap: 'wrap',
+                }}>
+                  <div>
+                    <strong style={{ fontSize: '14px', color: '#065F46', display: 'block' }}>Technician Completed Service</strong>
+                    <span style={{ fontSize: '12px', color: '#047857' }}>Review the completed work and confirm to release the technician's payout (Simulated payment).</span>
+                  </div>
+                  <button
+                    className="btn primary"
+                    style={{ background: '#10B981', borderColor: '#10B981', color: '#FFFFFF', fontWeight: 600, padding: '8px 16px', whiteSpace: 'nowrap' }}
+                    onClick={async () => {
+                      try {
+                        await dbService.confirmJobCompletion(bookingId);
+                        onRefreshBookings?.();
+                        loadTracking();
+                      } catch (err) {
+                        alert(err.message || 'Failed to confirm job completion');
+                      }
+                    }}
+                  >
+                    <CheckCircle2 size={16} /> Confirm job completed
+                  </button>
+                </div>
+              )}
+
               {/* ETA & Status Ribbon */}
               <div style={{
                 display: 'grid',
@@ -390,8 +470,8 @@ export default function LiveTrackingModal({ bookingId, userId, onClose, onRefres
               }}>
                 <span>
                   {routeInfo?.isRoadRoute
-                    ? '🗺️ Calculated along verified local roadways via OpenStreetMap'
-                    : '📍 Straight-line proximity estimate (road routing calculating)'}
+                    ? '🗺️ Calculated along verified local roadways via Google Maps Navigation'
+                    : '📍 Proximity estimate (calculating navigation route)'}
                 </span>
                 <span>
                   Pinch or scroll to zoom · Drag to pan

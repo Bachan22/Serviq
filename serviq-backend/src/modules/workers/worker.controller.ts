@@ -95,6 +95,25 @@ export class WorkerController {
       data: result,
     });
   }
+
+  async getDashboardStats(request: FastifyRequest, reply: FastifyReply) {
+    const workerId = request.user.id;
+    const stats = await workerService.getDashboardStats(workerId);
+    return reply.status(200).send({
+      success: true,
+      data: stats,
+    });
+  }
+
+  async updateRates(request: FastifyRequest, reply: FastifyReply) {
+    const workerId = request.user.id;
+    const body = request.body as { hourlyRate?: number; baseVisitingFee?: number };
+    const updated = await workerService.updateRates(workerId, body);
+    return reply.status(200).send({
+      success: true,
+      data: updated,
+    });
+  }
 }
 
 export const workerController = new WorkerController();

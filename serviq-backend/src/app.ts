@@ -18,7 +18,12 @@ import { walletRoutes } from './modules/wallets/wallet.routes.js';
 import { paymentRoutes } from './modules/payments/payment.routes.js';
 import { reviewRoutes } from './modules/reviews/review.routes.js';
 import { adminRoutes } from './modules/admin/admin.routes.js';
+import { messageRoutes } from './modules/messages/messages.routes.js';
+import { transcribeRoutes } from './modules/transcribe/transcribe.routes.js';
+import { notificationRoutes } from './modules/notifications/notification.routes.js';
 import { BusinessRules } from './config/business-rules.js';
+
+import { client } from './database/connection.js';
 
 export function buildApp(): FastifyInstance {
   const app = Fastify({
@@ -30,7 +35,14 @@ export function buildApp(): FastifyInstance {
 
   // CORS setup
   app.register(cors, {
-    origin: [env.CORS_ORIGIN, 'http://localhost:5173'],
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true);
+      const allowed = env.getAllowedOrigins();
+      if (allowed.includes(origin) || allowed.some((a) => origin.startsWith(a))) {
+        return cb(null, true);
+      }
+      return cb(new Error('Not allowed by CORS'), false);
+    },
     credentials: true,
   });
 
@@ -48,13 +60,42 @@ export function buildApp(): FastifyInstance {
     timeWindow: '1 minute',
   });
 
-  // Global Health & Info Route
-  app.get('/health', async () => ({
-    status: 'healthy',
-    timestamp: new Date().toISOString(),
-    version: '1.0.0',
-    environment: env.NODE_ENV,
-  }));
+  // Gracefully parse JSON bodies, including empty strings or empty payloads
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, body: string, done) => {
+    if (!body || body.trim() === '') {
+      done(null, {});
+      return;
+    }
+    try {
+      const json = JSON.parse(body);
+      done(null, json);
+    } catch (err: any) {
+      err.statusCode = 400;
+      done(err, undefined);
+    }
+  });
+
+  // Global Health & Info Route with DB connection verification
+  app.get('/health', async (request, reply) => {
+    try {
+      const [dbRes] = await client`SELECT 1 as connected`;
+      return {
+        status: 'healthy',
+        database: dbRes?.connected === 1 ? 'connected' : 'unknown',
+        timestamp: new Date().toISOString(),
+        version: '1.0.0',
+        environment: env.NODE_ENV,
+      };
+    } catch (err: any) {
+      request.log.error(err, 'Database health check failed');
+      return reply.status(503).send({
+        status: 'unhealthy',
+        database: 'disconnected',
+        error: err.message,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  });
 
   // Public Configuration Endpoint (exposing configurable non-sensitive rules to frontend)
   app.get('/api/v1/config/business-rules', async () => ({
@@ -81,6 +122,9 @@ export function buildApp(): FastifyInstance {
   app.register(paymentRoutes, { prefix: '/api/v1/payments' });
   app.register(reviewRoutes, { prefix: '/api/v1' });
   app.register(adminRoutes, { prefix: '/api/v1' });
+  app.register(messageRoutes, { prefix: '/api/v1/messages' });
+  app.register(transcribeRoutes);
+  app.register(notificationRoutes, { prefix: '/api/v1/notifications' });
 
   // Standardized Global Error Handler
   app.setErrorHandler((error, request, reply) => {

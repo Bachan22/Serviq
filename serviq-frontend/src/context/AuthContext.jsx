@@ -7,21 +7,37 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Restore authenticated session on mount
+  // Restore authenticated session on mount and listen for authorization invalidations
   useEffect(() => {
     let mounted = true;
+
+    const handleUnauthorized = () => {
+      if (mounted) setUser(null);
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('serviq:unauthorized', handleUnauthorized);
+    }
+
     authApi.getMe()
       .then((sessionUser) => {
-        if (mounted && sessionUser) {
-          setUser(sessionUser);
+        if (mounted) {
+          setUser(sessionUser || null);
         }
       })
-      .catch(() => {})
+      .catch(() => {
+        if (mounted) setUser(null);
+      })
       .finally(() => {
         if (mounted) setIsLoading(false);
       });
 
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('serviq:unauthorized', handleUnauthorized);
+      }
+    };
   }, []);
 
   const login = async ({ email, password, rememberMe }) => {

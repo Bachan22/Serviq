@@ -11,6 +11,8 @@
     "seed:clean": "node scripts/seed.js --clean"
   },
   "dependencies": {
+    "@googlemaps/js-api-loader": "^2.1.3",
+    "@googlemaps/markerclusterer": "^2.6.2",
     "@vitejs/plugin-react": "latest",
     "leaflet": "^1.9.4",
     "lucide-react": "^0.468.0",

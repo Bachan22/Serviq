@@ -19,3 +19,7 @@ export * from './reviews';
 export * from './worker-documents';
 export * from './saved-workers';
 export * from './job-offers';
+export * from './service-issues';
+export * from './conversations';
+export * from './messages';
+export * from './notifications';

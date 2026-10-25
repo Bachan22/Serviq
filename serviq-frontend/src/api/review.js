@@ -27,7 +27,8 @@ export const reviewApi = {
    * Fetch public reviews and rating summary for a worker
    */
   async getWorkerReviews(workerId, page = 1, limit = 10) {
-    const res = await apiClient(`/reviews/worker/${workerId}?page=${page}&limit=${limit}`);
+    const res = await apiClient(`/workers/${workerId}/reviews?page=${page}&limit=${limit}`);
     return res.data;
   },
 };
+

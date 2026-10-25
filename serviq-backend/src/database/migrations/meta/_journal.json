@@ -36,6 +36,20 @@
       "when": 1792804400487,
       "tag": "0004_regular_micromax",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792805000000,
+      "tag": "0005_clean_dynamic_schema",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792806000000,
+      "tag": "0006_chat_notifications_rls",
+      "breakpoints": true
     }
   ]
 }

@@ -83,7 +83,7 @@ export class NegotiationService {
     });
   }
 
-  async respondToEstimate(customerId: string, bookingId: string, input: RespondEstimateInput) {
+  async respondToEstimate(userId: string, bookingId: string, input: RespondEstimateInput) {
     const booking = await db.query.bookings.findFirst({
       where: eq(bookings.id, bookingId),
     });
@@ -92,8 +92,16 @@ export class NegotiationService {
       throw new NotFoundError('Booking not found.');
     }
 
-    if (booking.customerId !== customerId) {
-      throw new ForbiddenError('You do not own this booking.');
+    const isCustomer = booking.customerId === userId;
+    const isWorker = booking.workerId === userId;
+
+    if (!isCustomer && !isWorker) {
+      throw new ForbiddenError('You are not authorized to participate in this negotiation.');
+    }
+
+    // Check if agreed price is already locked
+    if (booking.agreedLaborPrice && ['IN_PROGRESS', 'COMPLETED'].includes(booking.status)) {
+      throw new BadRequestError('Price agreement is already finalized and cannot be modified.');
     }
 
     // Find latest pending round
@@ -106,7 +114,7 @@ export class NegotiationService {
     });
 
     if (!pendingRound) {
-      throw new NotFoundError('No active pending quote to respond to.');
+      throw new NotFoundError('No active pending quote or offer to respond to.');
     }
 
     // Active Query-Time Offer Expiry check
@@ -118,6 +126,21 @@ export class NegotiationService {
       throw new GoneError('The price offer has expired (15-minute validity window elapsed). Please request a fresh estimate.');
     }
 
+    // Prevent user from responding to their own offer
+    if (pendingRound.senderId === userId) {
+      throw new BadRequestError('Cannot respond to your own offer. Awaiting response from the other party.');
+    }
+
+    // Role-based recipient authorization
+    if (pendingRound.senderRole === 'WORKER' && !isCustomer) {
+      throw new ForbiddenError('Only the customer can respond to this worker estimate.');
+    }
+    if (pendingRound.senderRole === 'CUSTOMER' && !isWorker) {
+      throw new ForbiddenError('Only the assigned service professional can respond to this customer offer.');
+    }
+
+    const responderRole = isCustomer ? 'CUSTOMER' : 'WORKER';
+
     return await db.transaction(async (tx) => {
       if (input.action === 'ACCEPT') {
         // Accept price offer
@@ -126,25 +149,28 @@ export class NegotiationService {
           .where(eq(negotiationRounds.id, pendingRound.id));
 
         const laborPrice = Number(pendingRound.proposedLaborPrice);
-        const partsPrice = Number(pendingRound.proposedPartsPrice);
+        const partsPrice = Number(pendingRound.proposedPartsPrice || 0);
         const totalPrice = laborPrice + partsPrice;
 
-        // Transition booking to IN_PROGRESS
+        // Transition booking: if worker has already arrived, transition to IN_PROGRESS, else ACCEPTED
+        const nextStatus = booking.status === 'ARRIVED' ? 'IN_PROGRESS' : 'ACCEPTED';
+        const startTimestamp = nextStatus === 'IN_PROGRESS' ? new Date() : null;
+
         const [updatedBooking] = await tx.update(bookings).set({
           agreedLaborPrice: laborPrice.toString(),
           agreedPartsPrice: partsPrice.toString(),
           finalTotalPrice: totalPrice.toString(),
-          status: 'IN_PROGRESS',
-          startedAt: new Date(),
+          status: nextStatus,
+          startedAt: startTimestamp,
           updatedAt: new Date(),
         }).where(eq(bookings.id, bookingId)).returning();
 
         await tx.insert(bookingStatusHistory).values({
           bookingId,
-          fromStatus: 'NEGOTIATING',
-          toStatus: 'IN_PROGRESS',
-          changedBy: customerId,
-          changeReason: `Offer accepted by customer: ₹${totalPrice} (₹${laborPrice} labor + ₹${partsPrice} parts)`,
+          fromStatus: booking.status,
+          toStatus: nextStatus,
+          changedBy: userId,
+          changeReason: `Offer accepted by ${responderRole.toLowerCase()}: ₹${totalPrice} (₹${laborPrice} labor + ₹${partsPrice} parts)`,
         });
 
         return {
@@ -156,18 +182,18 @@ export class NegotiationService {
           throw new BadRequestError('Counter offer labor price is required.');
         }
 
-        // Check customer round limit
+        // Check responder round limit (max 2 rounds per party)
         const allRounds = await tx.query.negotiationRounds.findMany({
           where: eq(negotiationRounds.bookingId, bookingId),
         });
-        const customerRounds = allRounds.filter((r) => r.senderRole === 'CUSTOMER');
+        const partyRounds = (allRounds || []).filter((r) => r.senderRole === responderRole);
         const maxRounds = BusinessRules.negotiation.maxRoundsPerParty; // 2
 
-        if (customerRounds.length >= maxRounds) {
+        if (partyRounds.length >= maxRounds) {
           throw new BadRequestError(`Maximum counter-offers reached (${maxRounds} allowed per party). You can accept or cancel.`);
         }
 
-        // Mark worker round as COUNTERED
+        // Mark previous round as COUNTERED
         await tx.update(negotiationRounds)
           .set({ status: 'COUNTERED', respondedAt: new Date() })
           .where(eq(negotiationRounds.id, pendingRound.id));
@@ -175,25 +201,30 @@ export class NegotiationService {
         const expiryMinutes = BusinessRules.negotiation.offerExpiryMinutes;
         const expiresAt = new Date(Date.now() + expiryMinutes * 60 * 1000);
 
-        // Insert customer counter offer
+        // Insert counter offer
         const [counterRound] = await tx.insert(negotiationRounds).values({
           bookingId,
-          senderId: customerId,
-          senderRole: 'CUSTOMER',
-          roundNumber: customerRounds.length + 1,
+          senderId: userId,
+          senderRole: responderRole,
+          roundNumber: partyRounds.length + 1,
           proposedLaborPrice: input.counterLaborPrice.toString(),
           proposedPartsPrice: pendingRound.proposedPartsPrice,
-          itemizedLaborDetails: input.counterReason || 'Customer counter-offer',
+          itemizedLaborDetails: input.counterReason || `${responderRole === 'CUSTOMER' ? 'Customer' : 'Worker'} counter-offer`,
           status: 'PENDING',
           expiresAt,
         }).returning();
 
+        await tx.update(bookings).set({
+          status: 'NEGOTIATING',
+          updatedAt: new Date(),
+        }).where(eq(bookings.id, bookingId));
+
         await tx.insert(bookingStatusHistory).values({
           bookingId,
-          fromStatus: 'NEGOTIATING',
+          fromStatus: booking.status,
           toStatus: 'NEGOTIATING',
-          changedBy: customerId,
-          changeReason: `Counter offer submitted by customer: ₹${input.counterLaborPrice} labor (Round ${counterRound.roundNumber})`,
+          changedBy: userId,
+          changeReason: `Counter offer submitted by ${responderRole.toLowerCase()}: ₹${input.counterLaborPrice} labor (Round ${counterRound.roundNumber})`,
         });
 
         return {
@@ -206,17 +237,25 @@ export class NegotiationService {
           .set({ status: 'REJECTED', respondedAt: new Date() })
           .where(eq(negotiationRounds.id, pendingRound.id));
 
+        await tx.update(bookings).set({
+          status: 'CANCELLED',
+          cancelledBy: responderRole,
+          cancellationReason: input.counterReason || `Offer rejected by ${responderRole.toLowerCase()}`,
+          cancelledAt: new Date(),
+          updatedAt: new Date(),
+        }).where(eq(bookings.id, bookingId));
+
         await tx.insert(bookingStatusHistory).values({
           bookingId,
-          fromStatus: 'NEGOTIATING',
-          toStatus: 'NEGOTIATING',
-          changedBy: customerId,
-          changeReason: 'Offer rejected by customer',
+          fromStatus: booking.status,
+          toStatus: 'CANCELLED',
+          changedBy: userId,
+          changeReason: `Offer rejected by ${responderRole.toLowerCase()}`,
         });
 
         return {
           action: 'REJECTED',
-          message: 'Estimate rejected. You may request another estimate or cancel the booking.',
+          message: 'Offer rejected and booking cancelled.',
         };
       }
     });

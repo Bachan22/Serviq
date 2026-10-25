@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import { dbService } from '../api/database.js';
+import { notificationApi } from '../api/notifications.js';
 import {
   House,
   LayoutDashboard,
@@ -41,13 +42,59 @@ export default function WorkerLayout({ notify }) {
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showSupportModal, setShowSupportModal] = useState(false);
-  const [unreadCount, setUnreadCount] = useState(2);
+  const [notifications, setNotifications] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
 
-  const notifications = [
-    { id: 1, title: 'New Job Match Nearby', desc: 'A customer in your service area posted a new request.', link: '/worker/jobs', time: 'Just now' },
-    { id: 2, title: 'Payout Settlement Processed', desc: 'Recent earnings have been credited to your direct payout ledger.', link: '/worker/earnings', time: '1h ago' },
-    { id: 3, title: 'Identity Verified', desc: 'Your trade skill and profile are approved for live service bookings.', link: '/worker/profile', time: '1d ago' },
-  ];
+  const fetchNotifications = useCallback(async () => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('serviq_access_token') : null;
+    if (!user?.id || !token) {
+      setNotifications([]);
+      setUnreadCount(0);
+      return;
+    }
+    try {
+      const data = await notificationApi.getNotifications();
+      const list = Array.isArray(data) ? data : [];
+      setNotifications(list);
+      setUnreadCount(list.filter((n) => !n.isRead && !n.read).length);
+    } catch {
+      // ignore
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    fetchNotifications();
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      fetchNotifications();
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [fetchNotifications]);
+
+  const handleMarkAllRead = async () => {
+    try {
+      await notificationApi.markAllAsRead();
+      setUnreadCount(0);
+      setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
+      notify?.('All notifications marked as read.');
+    } catch (err) {
+      console.warn(err);
+    }
+  };
+
+  const handleClickNotification = async (n) => {
+    try {
+      if (!n.isRead && !n.read) {
+        await notificationApi.markAsRead(n.id);
+        setNotifications((prev) =>
+          prev.map((item) => (item.id === n.id ? { ...item, isRead: true } : item))
+        );
+        setUnreadCount((c) => Math.max(0, c - 1));
+      }
+    } catch {}
+    setShowNotifications(false);
+    navigate('/worker/jobs');
+  };
 
   const isPendingVerification = user?.verificationStatus === 'pending';
 
@@ -69,7 +116,10 @@ export default function WorkerLayout({ notify }) {
     }
     refreshJobCount();
 
-    const interval = setInterval(refreshJobCount, 4000);
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      refreshJobCount();
+    }, 4000);
     return () => clearInterval(interval);
   }, [user?.id, availability]);
 
@@ -197,39 +247,41 @@ export default function WorkerLayout({ notify }) {
                 {unreadCount > 0 && (
                   <button
                     type="button"
-                    onClick={() => {
-                      setUnreadCount(0);
-                      notify?.('All notifications marked as read.');
-                    }}
+                    onClick={handleMarkAllRead}
                     style={{ background: 'none', border: 'none', fontSize: '11px', color: '#FF9900', fontWeight: '600', cursor: 'pointer' }}
                   >
                     Mark all read
                   </button>
                 )}
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {notifications.map((n) => (
-                  <div
-                    key={n.id}
-                    onClick={() => {
-                      setShowNotifications(false);
-                      navigate(n.link);
-                    }}
-                    style={{
-                      padding: '8px 10px',
-                      borderRadius: '8px',
-                      background: '#f8fafc',
-                      cursor: 'pointer',
-                      borderLeft: '3px solid #FF9900',
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', fontWeight: '600', color: '#0f172a' }}>
-                      <span>{n.title}</span>
-                      <small style={{ color: '#94a3b8', fontWeight: '400' }}>{n.time}</small>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '360px', overflowY: 'auto' }}>
+                {notifications.length > 0 ? (
+                  notifications.map((n) => (
+                    <div
+                      key={n.id}
+                      onClick={() => handleClickNotification(n)}
+                      style={{
+                        padding: '8px 10px',
+                        borderRadius: '8px',
+                        background: n.isRead || n.read ? '#f8fafc' : '#FFF7ED',
+                        cursor: 'pointer',
+                        borderLeft: n.isRead || n.read ? '3px solid #CBD5E1' : '3px solid #FF9900',
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', fontWeight: '600', color: '#0f172a' }}>
+                        <span>{n.title}</span>
+                        <small style={{ color: '#94a3b8', fontWeight: '400' }}>
+                          {n.createdAt ? new Date(n.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Now'}
+                        </small>
+                      </div>
+                      <p style={{ margin: '3px 0 0', fontSize: '12px', color: '#64748b', lineHeight: '1.3' }}>{n.body || n.desc}</p>
                     </div>
-                    <p style={{ margin: '3px 0 0', fontSize: '12px', color: '#64748b', lineHeight: '1.3' }}>{n.desc}</p>
+                  ))
+                ) : (
+                  <div style={{ textAlign: 'center', padding: '16px 0', fontSize: '12px', color: '#94A3B8' }}>
+                    No alerts yet
                   </div>
-                ))}
+                )}
               </div>
             </div>
           )}

@@ -1,0 +1,292 @@
+/* Serviq Voice Input Button Styles */
+
+.serviq-voice-wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  vertical-align: middle;
+  font-family: inherit;
+}
+
+/* Language Toggle Pill */
+.serviq-voice-lang-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 700;
+  background: #F1F5F9;
+  color: #334155;
+  border: 1px solid #CBD5E1;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.serviq-voice-lang-toggle:hover {
+  background: #E2E8F0;
+  color: #0F172A;
+  border-color: #94A3B8;
+}
+
+.serviq-voice-lang-toggle:focus-visible {
+  outline: 2px solid #FF9500;
+  outline-offset: 2px;
+}
+
+/* Mic Button Base (Minimum 44x44px touch target) */
+.serviq-voice-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1.5px solid #E2E8F0;
+  background: #FFFFFF;
+  color: #1A1208;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+  padding: 0;
+}
+
+.serviq-voice-btn:hover {
+  background: #FFF7ED;
+  border-color: #FF9500;
+  color: #EA580C;
+  transform: scale(1.04);
+}
+
+.serviq-voice-btn:focus-visible {
+  outline: 3px solid #FF9500;
+  outline-offset: 2px;
+}
+
+/* Listening State: Orange Pulsing Ring */
+.serviq-voice-btn.listening {
+  background: #FF9500;
+  border-color: #EA580C;
+  color: #1A1208;
+  animation: serviq-voice-pulse 1.4s infinite cubic-bezier(0.4, 0, 0.6, 1);
+}
+
+@keyframes serviq-voice-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 149, 0, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(255, 149, 0, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 149, 0, 0);
+  }
+}
+
+/* Accessibility: Respect Reduced Motion */
+@media (prefers-reduced-motion: reduce) {
+  .serviq-voice-btn.listening {
+    animation: none;
+    box-shadow: 0 0 0 3px #FF9500;
+  }
+  .serviq-voice-pulse-dot {
+    animation: none !important;
+  }
+}
+
+/* Popover overlay */
+.serviq-voice-popover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  z-index: 1050;
+  min-width: 260px;
+  max-width: 340px;
+  background: #FFFFFF;
+  border: 1px solid #E2E8F0;
+  border-radius: 14px;
+  padding: 12px 14px;
+  box-shadow: 0 12px 28px -4px rgba(26, 18, 8, 0.16), 0 4px 12px rgba(0, 0, 0, 0.06);
+  font-size: 13px;
+  color: #1A1208;
+  animation: serviq-popover-in 0.18s ease-out;
+}
+
+@keyframes serviq-popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.serviq-voice-popover-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.serviq-voice-pulse-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #FF9500;
+  animation: serviq-dot-blink 1s infinite alternate;
+}
+
+@keyframes serviq-dot-blink {
+  from { opacity: 0.4; transform: scale(0.85); }
+  to { opacity: 1; transform: scale(1.15); }
+}
+
+.serviq-voice-listening-label {
+  font-weight: 700;
+  color: #EA580C;
+  font-size: 13px;
+  flex: 1;
+}
+
+.serviq-voice-close-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: #94A3B8;
+  padding: 3px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.serviq-voice-close-btn:hover {
+  color: #1E293B;
+  background: #F1F5F9;
+}
+
+.serviq-voice-transcript-box {
+  background: #F8FAFC;
+  border: 1px solid #E2E8F0;
+  border-radius: 8px;
+  padding: 8px 10px;
+  min-height: 40px;
+  max-height: 90px;
+  overflow-y: auto;
+  font-size: 13px;
+  color: #0F172A;
+  margin-bottom: 8px;
+  word-break: break-word;
+}
+
+.serviq-voice-interim {
+  font-style: italic;
+  color: #0284C7;
+  font-weight: 500;
+}
+
+.serviq-voice-hint {
+  color: #94A3B8;
+  font-size: 11.5px;
+}
+
+.serviq-voice-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: #64748B;
+}
+
+.serviq-voice-privacy {
+  font-size: 10px;
+  color: #94A3B8;
+  line-height: 1.25;
+  flex: 1;
+}
+
+.serviq-voice-stop-btn {
+  background: #1A1208;
+  color: #FFFFFF;
+  border: none;
+  border-radius: 6px;
+  padding: 5px 12px;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.serviq-voice-stop-btn:hover {
+  opacity: 0.9;
+}
+
+/* Feedback Popover */
+.serviq-voice-popover.feedback-popover {
+  border-left: 3px solid #10B981;
+}
+
+.serviq-voice-popover.feedback-popover.error {
+  border-left: 3px solid #EF4444;
+}
+
+.serviq-voice-feedback-content {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.serviq-voice-heard-line {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: #334155;
+  margin-bottom: 4px;
+}
+
+.serviq-voice-parsed-amount {
+  font-size: 13px;
+  color: #0F172A;
+  margin-top: 2px;
+}
+
+.serviq-voice-parsed-amount strong {
+  background: #FEF3C7;
+  color: #92400E;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.serviq-voice-matched-chip {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 11px;
+  background: #E0F2FE;
+  color: #0369A1;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.serviq-voice-error-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: #B91C1C;
+  font-size: 12px;
+  line-height: 1.35;
+}

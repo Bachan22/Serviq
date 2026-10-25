@@ -78,4 +78,23 @@ export const workerApi = {
     const res = await apiClient(`/workers/${workerId}`);
     return res.data;
   },
+
+  /**
+   * Get worker live dashboard statistics and 7-day earnings chart
+   */
+  async getDashboardStats() {
+    const res = await apiClient('/workers/dashboard-stats');
+    return res.data;
+  },
+
+  /**
+   * Update worker hourly rates and base visiting fee
+   */
+  async updateRates({ hourlyRate, baseVisitingFee }) {
+    const res = await apiClient('/workers/rates', {
+      method: 'PATCH',
+      body: { hourlyRate, baseVisitingFee },
+    });
+    return res.data;
+  },
 };

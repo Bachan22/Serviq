@@ -12,6 +12,7 @@ import {
   Sparkles,
   ArrowRight,
 } from 'lucide-react';
+import VoiceInputButton from '../../components/voice/VoiceInputButton.jsx';
 
 export default function WorkerRatesPage({ notify }) {
   const { user, updateRates } = useAuth();
@@ -96,6 +97,12 @@ export default function WorkerRatesPage({ notify }) {
               >
                 + ₹50
               </button>
+              <VoiceInputButton
+                mode="number"
+                onResult={(amount) => {
+                  if (amount) setHourlyRate(amount);
+                }}
+              />
             </div>
 
             <div className="quick-rate-pills">
@@ -120,15 +127,24 @@ export default function WorkerRatesPage({ notify }) {
               <label htmlFor="visiting-fee-input">
                 Diagnostic & Inspection Fee (₹)
               </label>
-              <div className="input-with-symbol">
-                <span>₹</span>
-                <input
-                  id="visiting-fee-input"
-                  type="number"
-                  min="100"
-                  step="50"
-                  value={visitingFee}
-                  onChange={(e) => setVisitingFee(Number(e.target.value))}
+              <div className="input-with-symbol" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div style={{ position: 'relative', flex: 1, display: 'flex', alignItems: 'center' }}>
+                  <span>₹</span>
+                  <input
+                    id="visiting-fee-input"
+                    type="number"
+                    min="100"
+                    step="50"
+                    value={visitingFee}
+                    onChange={(e) => setVisitingFee(Number(e.target.value))}
+                    style={{ width: '100%' }}
+                  />
+                </div>
+                <VoiceInputButton
+                  mode="number"
+                  onResult={(amount) => {
+                    if (amount) setVisitingFee(amount);
+                  }}
                 />
               </div>
               <small className="field-hint">
@@ -140,15 +156,24 @@ export default function WorkerRatesPage({ notify }) {
               <label htmlFor="emergency-surcharge-input">
                 Emergency / Late Night Surcharge (₹)
               </label>
-              <div className="input-with-symbol">
-                <span>₹</span>
-                <input
-                  id="emergency-surcharge-input"
-                  type="number"
-                  min="0"
-                  step="50"
-                  value={emergencySurcharge}
-                  onChange={(e) => setEmergencySurcharge(Number(e.target.value))}
+              <div className="input-with-symbol" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div style={{ position: 'relative', flex: 1, display: 'flex', alignItems: 'center' }}>
+                  <span>₹</span>
+                  <input
+                    id="emergency-surcharge-input"
+                    type="number"
+                    min="0"
+                    step="50"
+                    value={emergencySurcharge}
+                    onChange={(e) => setEmergencySurcharge(Number(e.target.value))}
+                    style={{ width: '100%' }}
+                  />
+                </div>
+                <VoiceInputButton
+                  mode="number"
+                  onResult={(amount) => {
+                    if (amount) setEmergencySurcharge(amount);
+                  }}
                 />
               </div>
               <small className="field-hint">

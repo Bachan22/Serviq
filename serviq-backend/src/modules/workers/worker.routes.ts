@@ -24,6 +24,16 @@ export async function workerRoutes(fastify: FastifyInstance) {
     handler: workerController.updateLocation.bind(workerController),
   });
 
+  fastify.get('/dashboard-stats', {
+    preHandler: [verifyAuth, requireRoles(['WORKER'])],
+    handler: workerController.getDashboardStats.bind(workerController),
+  });
+
+  fastify.patch('/rates', {
+    preHandler: [verifyAuth, requireRoles(['WORKER'])],
+    handler: workerController.updateRates.bind(workerController),
+  });
+
   fastify.get('/skills', {
     preHandler: [verifyAuth, requireRoles(['WORKER'])],
     handler: workerController.getOwnSkills.bind(workerController),

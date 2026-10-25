@@ -14,6 +14,7 @@ import {
   ArrowLeft,
   Wrench,
 } from 'lucide-react';
+import VoiceInputButton from '../../components/voice/VoiceInputButton.jsx';
 
 const SKILLS = [
   'Plumber',
@@ -467,7 +468,7 @@ export default function SignupPage() {
 
                   <div className="form-group">
                     <label htmlFor="worker-rate">Base hourly / visiting rate (₹)</label>
-                    <div className="phone-input-group">
+                    <div className="phone-input-group" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <span className="phone-prefix">₹</span>
                       <input
                         id="worker-rate"
@@ -480,6 +481,16 @@ export default function SignupPage() {
                         placeholder="350"
                         required
                         className={touched.hourlyRate && errors.hourlyRate ? 'input-error' : ''}
+                        style={{ flex: 1 }}
+                      />
+                      <VoiceInputButton
+                        mode="number"
+                        onResult={(amount) => {
+                          if (amount) {
+                            setHourlyRate(String(amount));
+                            setErrors((prev) => ({ ...prev, hourlyRate: '' }));
+                          }
+                        }}
                       />
                     </div>
                     {touched.hourlyRate && errors.hourlyRate && (

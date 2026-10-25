@@ -9,9 +9,9 @@ export async function negotiationRoutes(fastify: FastifyInstance) {
     handler: negotiationController.submitEstimate.bind(negotiationController),
   });
 
-  // Customer responds to estimate (Accept, Counter, Reject)
+  // Customer or Worker responds to negotiation offer (Accept, Counter, Reject)
   fastify.post('/bookings/:id/respond', {
-    preHandler: [verifyAuth, requireRoles(['CUSTOMER'])],
+    preHandler: [verifyAuth, requireRoles(['CUSTOMER', 'WORKER'])],
     handler: negotiationController.respondToEstimate.bind(negotiationController),
   });
 

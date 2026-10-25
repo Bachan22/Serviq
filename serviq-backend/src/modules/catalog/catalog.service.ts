@@ -148,6 +148,74 @@ export class CatalogService {
 
     return updated;
   }
+
+  async listServiceIssues(categorySlugOrId?: string) {
+    const issuesMap: Record<string, string[]> = {
+      'ac-repair': [
+        'Not cooling',
+        'Gas refill',
+        'Servicing',
+        'Installation',
+        'Water leakage',
+        'Noise or smell',
+        'Not turning on',
+      ],
+      'plumbing': [
+        'Leaking tap',
+        'Blocked drain',
+        'Pipe fitting',
+        'Bathroom fitting',
+        'Water tank overflow / repair',
+        'Low water pressure',
+      ],
+      'electrical': [
+        'Fan repair',
+        'Switch or socket',
+        'Wiring',
+        'Light fitting',
+        'MCB / Fuse trip',
+        'Inverter checkup',
+      ],
+      'cleaning': [
+        'Deep home cleaning',
+        'Kitchen cleaning',
+        'Bathroom cleaning',
+        'Sofa & carpet shampooing',
+        'Balcony & window cleaning',
+      ],
+      'painting': [
+        'Full house painting',
+        'Touch up & wall patch',
+        'Waterproofing',
+        'Single room painting',
+        'Exterior weather coat',
+      ],
+      'carpentry': [
+        'Furniture repair',
+        'Door or lock fixing',
+        'Custom woodwork',
+        'Drill & hang',
+        'Cupboard hinge repair',
+      ],
+      'cooking': [
+        'Daily meal preparation',
+        'Party / event cooking',
+        'North Indian meals',
+        'South Indian meals',
+        'Diet & healthy meal prep',
+      ],
+    };
+
+    if (categorySlugOrId) {
+      const key = categorySlugOrId.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+      const matchedKey = Object.keys(issuesMap).find((k) => k === key || key.includes(k) || k.includes(key));
+      if (matchedKey) {
+        return { [matchedKey]: issuesMap[matchedKey] };
+      }
+    }
+
+    return issuesMap;
+  }
 }
 
 export const catalogService = new CatalogService();

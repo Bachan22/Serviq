@@ -24,7 +24,7 @@ export const bookingApi = {
   },
 
   /**
-   * Worker: Get available broadcast jobs in their radius
+   * Worker: Get available broadcast jobs matching skill and radius
    */
   async getAvailableBroadcasts() {
     const res = await apiClient('/bookings/broadcasts/available');
@@ -42,6 +42,56 @@ export const bookingApi = {
   },
 
   /**
+   * Worker: Create offer (accept at budget or counter with price)
+   */
+  async createOffer(bookingId, { price, kind = 'counter', reason }) {
+    const res = await apiClient(`/bookings/${bookingId}/offers`, {
+      method: 'POST',
+      body: { price: Number(price), kind, reason },
+    });
+    return res.data;
+  },
+
+  /**
+   * Get all offers for a job (Customer or Worker)
+   */
+  async getJobOffers(bookingId) {
+    const res = await apiClient(`/bookings/${bookingId}/offers`);
+    return res.data;
+  },
+
+  /**
+   * Customer: Accept a specific worker's offer
+   */
+  async acceptJobOffer(bookingId, offerId) {
+    const res = await apiClient(`/bookings/${bookingId}/offers/${offerId}/accept`, {
+      method: 'POST',
+    });
+    return res.data;
+  },
+
+  /**
+   * Customer: Reject a specific worker's offer
+   */
+  async rejectJobOffer(bookingId, offerId) {
+    const res = await apiClient(`/bookings/${bookingId}/offers/${offerId}/reject`, {
+      method: 'POST',
+    });
+    return res.data;
+  },
+
+  /**
+   * Customer: Counter a specific worker's offer
+   */
+  async counterJobOffer(bookingId, offerId, counterPrice) {
+    const res = await apiClient(`/bookings/${bookingId}/offers/${offerId}/counter`, {
+      method: 'POST',
+      body: { price: Number(counterPrice) },
+    });
+    return res.data;
+  },
+
+  /**
    * Worker: Accept or decline direct booking
    */
   async respondDirectBooking(bookingId, action, declineReason) {
@@ -53,12 +103,22 @@ export const bookingApi = {
   },
 
   /**
-   * Worker: Update status (ARRIVED, IN_PROGRESS, COMPLETED)
+   * Worker: Update status (ON_THE_WAY, ARRIVED, IN_PROGRESS with startCode, PAYMENT_PENDING)
    */
-  async updateStatus(bookingId, status) {
+  async updateStatus(bookingId, status, startCode) {
     const res = await apiClient(`/bookings/${bookingId}/status`, {
       method: 'PATCH',
-      body: { status },
+      body: { status, startCode },
+    });
+    return res.data;
+  },
+
+  /**
+   * Customer: Confirm completion and trigger simulated payout
+   */
+  async confirmCompletion(bookingId) {
+    const res = await apiClient(`/bookings/${bookingId}/confirm`, {
+      method: 'POST',
     });
     return res.data;
   },
@@ -105,12 +165,20 @@ export const bookingApi = {
    * List customer or worker bookings
    */
   async listBookings(query = {}) {
-    const res = await apiClient('/bookings', {
-      params: query,
-    });
-    return {
-      bookings: res.data,
-      meta: res.meta,
-    };
+    const token = typeof window !== 'undefined' ? localStorage.getItem('serviq_access_token') : null;
+    if (!token) {
+      return { bookings: [], meta: {} };
+    }
+    try {
+      const res = await apiClient('/bookings', {
+        params: query,
+      });
+      return {
+        bookings: res?.data || [],
+        meta: res?.meta || {},
+      };
+    } catch {
+      return { bookings: [], meta: {} };
+    }
   },
 };

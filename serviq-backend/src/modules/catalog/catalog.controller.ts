@@ -55,6 +55,15 @@ export class CatalogController {
       data: category,
     });
   }
+
+  async listServiceIssues(request: FastifyRequest, reply: FastifyReply) {
+    const { category } = request.query as { category?: string };
+    const issues = await catalogService.listServiceIssues(category);
+    return reply.status(200).send({
+      success: true,
+      data: issues,
+    });
+  }
 }
 
 export const catalogController = new CatalogController();

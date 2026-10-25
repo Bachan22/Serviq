@@ -15,10 +15,10 @@ export class NegotiationController {
   }
 
   async respondToEstimate(request: FastifyRequest, reply: FastifyReply) {
-    const customerId = request.user.id;
+    const userId = request.user.id;
     const { id: bookingId } = request.params as { id: string };
     const input = respondEstimateSchema.parse(request.body);
-    const result = await negotiationService.respondToEstimate(customerId, bookingId, input);
+    const result = await negotiationService.respondToEstimate(userId, bookingId, input);
     return reply.status(200).send({
       success: true,
       data: result,

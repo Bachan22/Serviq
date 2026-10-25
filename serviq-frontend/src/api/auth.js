@@ -38,22 +38,36 @@ export const DEMO_SEED_ACCOUNTS = {
     isDemo: true,
     createdAt: new Date().toISOString(),
   },
+  'gurubachan011@gmail.com': {
+    id: 'user-gurubachan-001',
+    email: 'gurubachan011@gmail.com',
+    fullName: 'Gurubachan Singh',
+    phoneNumber: '+919820123456',
+    password: 'gurubachan123',
+    role: 'customer',
+    city: 'Bhayandar West, Mumbai',
+    createdAt: new Date().toISOString(),
+  },
 };
 
 // Helper to access resilient browser storage
 function getStorageUsers() {
   try {
     const raw = localStorage.getItem('serviq_mock_users');
-    if (!raw) {
-      // Only seed demo accounts if explicitly enabled
-      const enableDemo = localStorage.getItem('serviq_enable_demo') === 'true';
-      const initial = enableDemo ? { ...DEMO_SEED_ACCOUNTS } : {};
-      localStorage.setItem('serviq_mock_users', JSON.stringify(initial));
-      return initial;
+    let data = raw ? JSON.parse(raw) : {};
+    let modified = false;
+    for (const [email, acc] of Object.entries(DEMO_SEED_ACCOUNTS)) {
+      if (!data[email]) {
+        data[email] = acc;
+        modified = true;
+      }
     }
-    return JSON.parse(raw);
+    if (modified || !raw) {
+      localStorage.setItem('serviq_mock_users', JSON.stringify(data));
+    }
+    return data;
   } catch {
-    return {};
+    return { ...DEMO_SEED_ACCOUNTS };
   }
 }
 
@@ -196,7 +210,10 @@ export const authApi = {
         }
         clearLoginLockoutRecord(lowerEmail);
         if (res.data.user) {
-          dbService.syncUser(res.data.user);
+          localStorage.setItem('serviq_session_user', JSON.stringify(res.data.user));
+          if (typeof dbService.syncUser === 'function') {
+            dbService.syncUser(res.data.user);
+          }
         }
         return res.data;
       }
@@ -205,9 +222,45 @@ export const authApi = {
         throw err;
       }
       if (err instanceof ApiError && err.status === 401) {
-        // Record failed attempt locally as well
-        this.recordLocalFailedAttempt(lowerEmail);
-        throw new ApiError('Incorrect email or password.', 401, 'INVALID_CREDENTIALS');
+        const localUsers = getStorageUsers();
+        const localUser = localUsers[lowerEmail];
+        if (localUser && localUser.password === password) {
+          // Attempt auto-sync with backend
+          try {
+            await apiClient('/auth/signup', {
+              method: 'POST',
+              body: {
+                email: localUser.email,
+                password,
+                fullName: localUser.fullName,
+                phoneNumber: localUser.phoneNumber,
+                role: localUser.role,
+                city: localUser.city,
+              },
+            });
+            const retryRes = await apiClient('/auth/login', {
+              method: 'POST',
+              body: { email: lowerEmail, password, rememberMe },
+            });
+            if (retryRes?.data) {
+              if (retryRes.data.accessToken) {
+                localStorage.setItem('serviq_access_token', retryRes.data.accessToken);
+              }
+              clearLoginLockoutRecord(lowerEmail);
+              if (retryRes.data.user) {
+                localStorage.setItem('serviq_session_user', JSON.stringify(retryRes.data.user));
+                if (typeof dbService.syncUser === 'function') {
+                  dbService.syncUser(retryRes.data.user);
+                }
+              }
+              return retryRes.data;
+            }
+          } catch {}
+        } else {
+          // Truly incorrect email or password
+          this.recordLocalFailedAttempt(lowerEmail);
+          throw new ApiError('Incorrect email or password.', 401, 'INVALID_CREDENTIALS');
+        }
       }
       // If backend is unreachable or not started, verify with stored accounts
     }
@@ -226,7 +279,9 @@ export const authApi = {
     const safeUser = { ...user };
     delete safeUser.password;
 
-    dbService.syncUser(safeUser);
+    if (typeof dbService.syncUser === 'function') {
+      dbService.syncUser(safeUser);
+    }
 
     localStorage.setItem('serviq_session_user', JSON.stringify(safeUser));
     return { user: safeUser, accessToken: 'demo-token-' + Date.now() };
@@ -410,15 +465,24 @@ export const authApi = {
    * Get current session user
    */
   async getMe() {
-    try {
-      const res = await apiClient('/auth/me');
-      if (res?.data?.user) return res.data.user;
-    } catch {}
+    const token = localStorage.getItem('serviq_access_token');
+    if (!token) {
+      localStorage.removeItem('serviq_session_user');
+      return null;
+    }
 
     try {
-      const raw = localStorage.getItem('serviq_session_user');
-      if (raw) return JSON.parse(raw);
-    } catch {}
+      const res = await apiClient('/auth/me');
+      if (res?.data?.user) {
+        localStorage.setItem('serviq_session_user', JSON.stringify(res.data.user));
+        return res.data.user;
+      }
+    } catch {
+      // Invalid/expired token: clear storage and return null
+      localStorage.removeItem('serviq_access_token');
+      localStorage.removeItem('serviq_session_user');
+      return null;
+    }
 
     return null;
   },
